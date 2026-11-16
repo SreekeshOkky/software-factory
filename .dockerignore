@@ -1,0 +1,7 @@
+.env
+**/node_modules
+orchestrator/dist
+*.md
+!docker/claude-home/**/*.md
+!plugins/**/*.md
+.git

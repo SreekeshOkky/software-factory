@@ -1,0 +1,42 @@
+# Factory-wide config. Everything repo-specific lives in each target repo's
+# factory.yml + CLAUDE.md (written by the onboard-repo skill), not here.
+# Adding a repo = add an entry under `repos` and onboard it. No code changes.
+
+poll_interval_seconds: 60
+
+# Exact status names from your Jira workflow. `review` is optional: leave it
+# out if your workflow has no "In Review" and tickets stay In Progress.
+statuses:
+  todo: "To Do"
+  in_progress: "In Progress"
+  review: "In Review"
+  done: "Done"
+
+# Only tickets carrying this label are touched. Opt-in, so the factory never
+# grabs a ticket by surprise.
+enable_label: factory-enabled
+
+# Turn budgets per headless claude run.
+max_turns:
+  build: 150
+  evidence: 40
+  review: 40
+  verify: 60
+
+# Model per agent role (aliases accepted by `claude --model`).
+models:
+  build: opus
+  review: opus
+  verify: sonnet
+
+# After a fully passing verification, open a PR with a Playwright regression
+# test for the ticket's acceptance criteria.
+regression_tests: false
+
+repos:
+  - name: portfolio
+    git: git@github.com:SreekeshOkky/portfolio.git
+    base_branch: main
+    jira:
+      project: PORT
+      # component: web   # optional: route by component when one project feeds several repos

@@ -1,0 +1,6 @@
+.env
+node_modules/
+orchestrator/dist/
+.data/
+.work/
+.DS_Store

@@ -1,0 +1,64 @@
+# {{PROJECT_NAME}}
+
+{{ONE_PARAGRAPH: what this repo is, who uses it, how it's deployed.}}
+
+These rules apply to every change, human or agent. They describe what the code
+already does; follow the existing pattern over your defaults. Each rule names an
+example file to copy.
+
+## Stack
+- {{framework + version, output mode, adapter/hosting}}
+- {{language + strictness}}
+- {{package manager; node/python version}}
+- Dev server: `{{DEV_COMMAND}}` on port {{DEV_PORT}}.
+
+## Commands
+| Task | Command |
+|---|---|
+| Install | `{{INSTALL}}` |
+| Dev | `{{DEV_COMMAND}}` |
+| Build | `{{BUILD}}` |
+| Type/static check | `{{CHECK}}` |
+| Unit/component tests | `{{UNIT}}` |
+| E2E tests | `{{E2E}}` |
+| Everything the factory runs | `{{TEST}}` |
+
+## Layout
+{{Tree or bullets: where routes, components, layouts, lib, data, content, API, scripts, styles live, one line each.}}
+
+## Code conventions
+{{Language: strictness, module style, imports (relative vs alias), quotes, indentation, naming.}}
+{{Components: file naming, props pattern, comment/header conventions. Short snippet.}}
+{{Client-side code: lifecycle hooks, where shared logic goes, how server data reaches the client.}}
+
+## Styling
+{{Approach; where tokens live; never hardcode values that have tokens; theming/dark mode; breakpoints used; reduced motion.}}
+
+## Accessibility and SEO
+{{Head/SEO component and required props; heading rules; images and alt text; icon buttons; link format; structured data; lists that must include new pages.}}
+
+## Sync points
+{{Things that must change together, and regenerate commands. One bullet each: "If you change X, also change Y".}}
+
+## Tests
+- Unit/component tests live in `{{UNIT_DIR}}` ({{runner}}); copy `{{UNIT_SEED}}`.
+- E2E tests live in `{{E2E_DIR}}` (Playwright against the production build); copy `{{E2E_SEED}}`.
+- {{What tests must not depend on: secrets, network, live APIs.}}
+
+## Commits
+- Prefixes: {{PREFIXES}}. {{Casing, scope usage, tone; example subjects from git log.}}
+- No ticket keys in the subject; the factory adds a `Jira: KEY` trailer.
+
+## Off limits
+Changes to these need a human. Agents must not edit them:
+{{bullets matching factory.yml protected_paths, with the reason for each}}
+
+## Factory
+This repo is served by the software factory (`factory.yml`).
+- `factory.yml` `test` is the red/green gate: it must fail on the red commit
+  and pass on the final one.
+- `ticket_modes` in `factory.yml` say what the red tests must assert for each kind
+  of ticket (for example `default` for code, `content` for posts).
+- The verifier uses `docs/app-navigation.md`. Update it when you add or move
+  a route or persistent UI.
+- Never edit `factory.yml` or any `protected_paths` entry.

@@ -1,0 +1,27 @@
+# App navigation
+
+For the factory's verifier agent, which checks acceptance criteria in a real
+browser and reads no source code. Keep it current when routes or persistent UI
+change.
+
+- **Base URL:** `http://localhost:{{PORT}}` (started with `factory.yml` `start`)
+- **URL rules:** {{trailing slash? locale prefixes? auth?}}
+- **Viewports:** desktop ≥ {{DESKTOP_BP}}; mobile ≤ {{MOBILE_BP}} {{what changes}}
+- **Theme:** {{how to toggle; how to tell which is active}}
+
+## Routes
+| Path | What it shows | How to reach it |
+|---|---|---|
+| `/` | {{...}} | {{...}} |
+{{one row per route; dynamic routes as a pattern plus one real example}}
+
+## Persistent UI
+### {{Header / nav}}
+- Where: {{...}} · Opens with: {{click/selector/shortcut}} · Contains: {{...}}
+{{one subsection each: mobile nav, menus, command palette, search, theme toggle, modals, toasts}}
+
+## Content
+{{Collections/data and where each entry appears (index page, detail URL pattern, feeds).}}
+
+## Doesn't work locally
+{{Features needing secrets/network (API routes, analytics, third-party embeds) and what they show without them.}}

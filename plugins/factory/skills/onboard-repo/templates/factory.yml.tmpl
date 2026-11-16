@@ -1,0 +1,55 @@
+# factory.yml: the contract between this repo and the software factory.
+# Written by the onboard-repo skill. The orchestrator reads exactly these keys;
+# don't rename, drop or add top-level keys. The factory itself never edits
+# this file (it is always a protected path).
+
+# Install dependencies from the lockfile. Runs in a fresh clone.
+install: "{{INSTALL}}"            # e.g. npm ci | pnpm install --frozen-lockfile | pip install -e '.[dev]'
+
+# Static/type check. Informational for agents; `test` decides red/green, so
+# include check in `test` too if it should gate.
+check: "{{CHECK}}"                # e.g. npm run check | tsc --noEmit | mypy .
+
+# The ONE command that decides red/green. Must exit non-zero on the red commit
+# and zero on the final commit. Must not need secrets or network.
+test: "{{TEST}}"                  # e.g. npm run check && npm test && npm run test:e2e
+
+# Build and serve the production app on `port`, in the foreground (the
+# orchestrator backgrounds and kills it). Used for screenshots and verification.
+start: "{{START}}"                # e.g. npm run build && npm run preview -- --port 4321
+
+# Port `start` listens on, and the path polled until it returns HTTP 200.
+port: {{PORT}}
+ready_path: "{{READY_PATH}}"      # e.g. /
+
+# Map of the running app for the verifier agent (who reads no source code).
+navigation_doc: docs/app-navigation.md
+
+# Globs the factory must never change. A PR touching any of these is blocked
+# and needs a human. `.env*` and factory.yml are always added by the factory.
+protected_paths:
+  - ".env*"
+{{PROTECTED_PATHS}}
+
+# Commit subjects keep the repo's own prefix style; the factory appends the
+# ticket key as a trailer ({KEY} is replaced, e.g. "Jira: WEB-12").
+commit_style:
+  prefixes: [{{PREFIXES}}]        # most used first, from git log
+  trailer: "Jira: {KEY}"
+
+# Ticket modes pick the red-green recipe. The first non-default mode whose
+# `match` hits (any label OR any issue type, case-insensitive for types) wins;
+# otherwise `default`. `default` is required. `recipe` is markdown telling the
+# builder what the failing (red) tests must assert for this kind of ticket.
+ticket_modes:
+  default:
+    match: {}
+    recipe: |
+      {{DEFAULT_RECIPE}}
+{{EXTRA_MODES}}
+#  <mode-name>:
+#    match:
+#      labels: [<jira-label>, ...]
+#      issue_types: [<Jira issue type>, ...]
+#    recipe: |
+#      What the red tests must assert, concretely, for this kind of ticket.

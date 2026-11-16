@@ -1,0 +1,17 @@
+services:
+  factory:
+    build: .
+    image: software-factory:local
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - factory-data:/data   # state.json, run logs, claude transcripts
+      - factory-work:/work   # per-ticket clones
+      - ./factory.config.yml:/app/factory.config.yml:ro
+    # Dev servers and Playwright run inside the container on localhost, so no
+    # ports need publishing. Give Chromium enough shared memory.
+    shm_size: "1gb"
+
+volumes:
+  factory-data:
+  factory-work:

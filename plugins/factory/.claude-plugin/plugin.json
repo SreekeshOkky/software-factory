@@ -1,0 +1,7 @@
+{
+  "name": "factory",
+  "version": "0.1.0",
+  "description": "Software-factory tooling. Provides /onboard-repo, which writes the contract files (CLAUDE.md, factory.yml, docs/app-navigation.md, test harness) the Jira-driven factory needs in a target repo.",
+  "author": { "name": "portfolio-factory" },
+  "keywords": ["factory", "onboarding", "tdd", "jira", "playwright"]
+}
