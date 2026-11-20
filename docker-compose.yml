@@ -7,11 +7,18 @@ services:
     volumes:
       - factory-data:/data   # state.json, run logs, claude transcripts
       - factory-work:/work   # per-ticket clones
+      - agent-transcripts:/home/agent/.claude/projects  # every agent's full session
+      - browsers:/ms-playwright  # Chromium builds downloaded for each repo's Playwright
       - ./factory.config.yml:/app/factory.config.yml:ro
     # Dev servers and Playwright run inside the container on localhost, so no
     # ports need publishing. Give Chromium enough shared memory.
     shm_size: "1gb"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
 
 volumes:
   factory-data:
   factory-work:
+  agent-transcripts:
+  browsers:

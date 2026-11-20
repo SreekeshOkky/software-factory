@@ -9,7 +9,7 @@ import type { Issue } from "../jira.js";
 import { log } from "../log.js";
 import { regressionPrompt, verifyPrompt } from "../prompts.js";
 import { loadRepoFactoryYml, type RepoFactoryYml } from "../repo.js";
-import { changedFiles, freshClone, git, install, runTests, startApp, type RunningApp } from "../workspace.js";
+import { changedFiles, freshClone, git, install, pushBranch, removeDir, runTests, startApp, type RunningApp } from "../workspace.js";
 import { Blocked, workDirFor, type Ctx } from "./context.js";
 
 export type Verdict = "PASS" | "FAIL" | "UNTESTABLE";
@@ -41,16 +41,21 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   const key = issue.key;
   const dir = workDirFor(ctx, repo, key, "verify");
   const shots = `${dir}-shots`;
-  rmSync(shots, { recursive: true, force: true });
+  await removeDir(shots);
   mkdirSync(shots, { recursive: true });
 
+  const step = (s: string) => state.step(key, repo.name, "verify", s);
+  step(`cloning ${repo.base_branch}`);
   await freshClone(repo.git, dir, repo.base_branch);
   const yml = loadRepoFactoryYml(dir);
   if (!yml) throw new Blocked(`\`${repo.name}\` isn't onboarded (no factory.yml), so it can't be verified.`);
+  step("installing dependencies");
   await install(yml, dir);
   const nav = existsSync(join(dir, yml.navigation_doc)) ? readFileSync(join(dir, yml.navigation_doc), "utf8") : "";
 
+  step("starting the app");
   const app = await startApp(yml, dir);
+  step("verifier agent checking criteria in the browser");
   let rows: VerdictRow[] | null = null;
   let reply = "";
   try {
@@ -70,6 +75,7 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
     rows = parseVerdicts(reply);
 
     if (rows && rows.every((r) => r.verdict === "PASS") && cfg.regression_tests) {
+      step("writing regression tests");
       await regression(ctx, repo, issue, yml, dir, app).catch((e) => log.warn(`${key}: regression PR failed: ${e}`));
     }
   } finally {
@@ -77,6 +83,7 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   }
   if (!rows) throw new Blocked(`The verifier didn't return verdicts:\n\n${reply.slice(-1500)}`);
 
+  step("posting verdicts to Jira");
   const failed = rows.filter((r) => r.verdict !== "PASS");
   const pngs = readdirSync(shots, { recursive: true }).map(String).filter((f) => f.endsWith(".png"));
   await jira.attach(key, pngs.map((f) => join(shots, f)));
@@ -112,7 +119,7 @@ async function regression(ctx: Ctx, repo: RepoEntry, issue: Issue, yml: RepoFact
   ctx.state.update(issue.key, repo.name, { costUsd: res.costUsd ?? 0 });
   if (!(await changedFiles(dir, repo.base_branch)).length) return;
   if ((await runTests(yml, dir)).code !== 0) throw new Error("regression suite does not pass");
-  if (!ctx.env.dryRun) await git(dir, "push", "--force-with-lease", "-u", "origin", branch);
+  if (!ctx.env.dryRun) await pushBranch(dir, repo.git, branch);
   const pr = await ctx.gh.createPr(slugFromGitUrl(repo.git), {
     head: branch,
     base: repo.base_branch,

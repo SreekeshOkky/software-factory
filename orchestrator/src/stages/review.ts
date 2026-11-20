@@ -43,11 +43,15 @@ export async function reviewStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   if (!pr) throw new Blocked(`Label \`${LABELS.prOpen}\` is set but no PR exists for branch \`${branchFor(issue.key)}\`.`);
   if (pr.state !== "OPEN") return; // close stage handles merged/closed PRs
 
+  const step = (s: string) => state.step(issue.key, repo.name, "review", s);
+  step(`cloning PR #${pr.number}`);
   const dir = workDirFor(ctx, repo, issue.key, "review");
   await freshClone(repo.git, dir, pr.headRefName);
   const diffPath = join(`${dir}-diff.patch`);
-  writeFileSync(diffPath, await gh.diff(slug, pr.number));
+  const diff = await gh.diff(slug, pr.number);
+  writeFileSync(diffPath, diff);
 
+  step("review agent reading the diff");
   const res = await runClaude(env, {
     agent: "pr-reviewer",
     label: `${issue.key}-review`,
@@ -61,7 +65,8 @@ export async function reviewStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   const review = parseReview(res.result);
   if (!review) throw new Blocked(`The review agent didn't return a parseable review:\n\n${res.result.slice(-1500)}`);
 
-  await gh.postReview(slug, pr.number, pr.headRefOid, reviewBody(review), review.comments);
+  step(`posting ${review.comments.length} review comment(s)`);
+  await gh.postReview(slug, pr.number, pr.headRefOid, reviewBody(review), review.comments, diff);
   const high = review.comments.filter((c) => c.severity === "high").length;
   await jira.comment(
     issue.key,

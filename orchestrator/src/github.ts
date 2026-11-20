@@ -27,6 +27,44 @@ export function slugFromGitUrl(url: string): string {
   return `${m[1]}/${m[2]}`;
 }
 
+/** New-side line numbers per file that GitHub accepts for inline comments (added + context lines). */
+export function commentableLines(diff: string): Map<string, Set<number>> {
+  const ok = new Map<string, Set<number>>();
+  let lines: Set<number> | undefined;
+  let n = 0;
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("diff --git")) {
+      lines = undefined;
+      continue;
+    }
+    if (l.startsWith("+++ ")) {
+      const path = l.slice(4).replace(/^b\//, "");
+      lines = path === "/dev/null" ? undefined : new Set();
+      if (lines) ok.set(path, lines);
+      continue;
+    }
+    const h = l.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+    if (h) {
+      n = Number(h[1]);
+      continue;
+    }
+    if (!lines || l.startsWith("--- ") || l.startsWith("\\")) continue;
+    if (l.startsWith("+") || l.startsWith(" ")) lines.add(n++);
+  }
+  return ok;
+}
+
+/** Splits review comments into ones GitHub will accept inline and ones that must go in the body. */
+export function splitComments(diff: string, comments: ReviewComment[]): { inline: ReviewComment[]; folded: ReviewComment[] } {
+  const ok = commentableLines(diff);
+  const inline: ReviewComment[] = [];
+  const folded: ReviewComment[] = [];
+  for (const c of comments) (ok.get(c.path)?.has(c.line) ? inline : folded).push(c);
+  return { inline, folded };
+}
+
+const bullet = (c: ReviewComment) => `- \`${c.path}:${c.line}\` ${c.severity ? `**${c.severity}** ` : ""}${c.body}`;
+
 export class GitHub {
   constructor(private o: { token: string; reviewerToken: string; dryRun?: boolean; tmpDir: string }) {}
 
@@ -73,7 +111,7 @@ export class GitHub {
    * Posts a COMMENT review with inline comments. If GitHub rejects a line
    * (422: not in the diff), retries with the comments folded into the body.
    */
-  async postReview(repo: string, n: number, commitId: string, summary: string, comments: ReviewComment[]): Promise<void> {
+  async postReview(repo: string, n: number, commitId: string, summary: string, comments: ReviewComment[], diff = ""): Promise<void> {
     const toInline = (c: ReviewComment) => ({
       path: c.path,
       line: c.line,
@@ -86,13 +124,15 @@ export class GitHub {
       writeFileSync(f, JSON.stringify(payload));
       return run("gh", ["api", "-X", "POST", `repos/${repo}/pulls/${n}/reviews`, "--input", f], { env: { GH_TOKEN: this.o.reviewerToken } });
     };
-    const first = await send({ commit_id: commitId, event: "COMMENT", body: summary, comments: comments.map(toInline) });
+    // One comment on a line outside the diff makes GitHub reject the whole review (422).
+    const { inline, folded } = diff ? splitComments(diff, comments) : { inline: comments, folded: [] };
+    if (folded.length) log.warn(`${folded.length} review comment(s) point outside the diff; moving them to the review body`);
+    const withFolded = folded.length ? `${summary}\n\n### Comments on lines outside the diff\n${folded.map(bullet).join("\n")}` : summary;
+    const first = await send({ commit_id: commitId, event: "COMMENT", body: withFolded, comments: inline.map(toInline) });
     if (first.code === 0) return;
-    log.warn(`inline review rejected, folding comments into body: ${first.stderr.slice(0, 300)}`);
-    const folded = comments.length
-      ? `${summary}\n\n### Comments\n${comments.map((c) => `- \`${c.path}:${c.line}\` ${c.severity ? `**${c.severity}** ` : ""}${c.body}`).join("\n")}`
-      : summary;
-    const second = await send({ commit_id: commitId, event: "COMMENT", body: folded });
+    log.warn(`inline review rejected, folding all comments into body: ${(first.stderr || first.stdout).slice(0, 300)}`);
+    const all = comments.length ? `${summary}\n\n### Comments\n${comments.map(bullet).join("\n")}` : summary;
+    const second = await send({ commit_id: commitId, event: "COMMENT", body: all });
     if (second.code !== 0) throw new Error(`review post failed: ${second.stderr.slice(0, 500)}`);
   }
 }

@@ -38,5 +38,5 @@ repos:
     git: git@github.com:SreekeshOkky/portfolio.git
     base_branch: main
     jira:
-      project: PORT
+      project: KAN
       # component: web   # optional: route by component when one project feeds several repos
