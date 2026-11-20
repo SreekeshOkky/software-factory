@@ -133,6 +133,12 @@ docker compose exec factory sh -c 'ls -t /data/runs/*.jsonl | head'
 cd orchestrator && npm install && npm test && npm run typecheck
 ```
 
+Turn on the repo's git hooks once per clone:
+```bash
+git config core.hooksPath .githooks
+```
+The `pre-push` hook refuses any push to `main`, so changes land through a PR. It runs only on your machine and `git push --no-verify` skips it. GitHub doesn't protect `main` because branch protection on a private repo needs GitHub Pro.
+
 Layout:
 - `orchestrator/src/index.ts`: the poll loop
 - `stages/*`: one file per lifecycle step
