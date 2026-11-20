@@ -9,7 +9,7 @@ import { log } from "../log.js";
 import { buildPrompt, evidencePrompt } from "../prompts.js";
 import { agentStatus, checkRedGreen, section } from "../redgreen.js";
 import { loadRepoFactoryYml, protectedViolations, selectMode } from "../repo.js";
-import { branchFor, changedFiles, freshClone, git, install, redCommits, runTests, startApp } from "../workspace.js";
+import { branchFor, changedFiles, freshClone, git, install, pushBranch, redCommits, removeDir, runTests, startApp } from "../workspace.js";
 import { Blocked, workDirFor, type Ctx } from "./context.js";
 
 export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promise<void> {
@@ -18,24 +18,31 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   const branch = branchFor(key);
   const slug = slugFromGitUrl(repo.git);
 
+  const step = (s: string) => state.step(key, repo.name, "build", s);
   await jira.updateLabels(key, [LABELS.building]);
   await jira.transitionTo(key, cfg.statuses.in_progress);
   state.update(key, repo.name, { branch }, { stage: "build", outcome: "started" });
+  await jira.comment(
+    key,
+    `**Factory started building** on branch \`${branch}\`. It will write failing tests first, then the implementation, then open a PR. Labels on this ticket show the current stage.`,
+  );
 
   const dir = workDirFor(ctx, repo, key, "build");
   const evidenceDir = `${dir}-evidence`;
-  rmSync(evidenceDir, { recursive: true, force: true });
+  await removeDir(evidenceDir);
   mkdirSync(evidenceDir, { recursive: true });
 
+  step(`cloning ${repo.base_branch}`);
   await freshClone(repo.git, dir, repo.base_branch);
   const yml = loadRepoFactoryYml(dir);
   if (!yml) throw new Blocked(`\`${repo.name}\` has no factory.yml on \`${repo.base_branch}\`, so it isn't onboarded. Run the onboard-repo skill on it first.`);
   await git(dir, "checkout", "-b", branch);
+  step("installing dependencies");
   await install(yml, dir);
 
   // 1. Build: red, green, refactor.
   const mode = selectMode(yml, issue);
-  log.info(`${key}: building in mode "${mode.name}"`);
+  step(`builder agent working (mode "${mode.name}")`);
   const built = await runClaude(env, {
     agent: "ticket-builder",
     label: `${key}-build`,
@@ -52,6 +59,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   if (!built.ok && status.status !== "DONE") throw new Blocked(`The builder run didn't finish:\n\n${built.result.slice(-2000)}`);
 
   // 2. The factory's own checks: protected paths, then red-green.
+  step("checking protected paths");
   const changed = await changedFiles(dir, repo.base_branch);
   if (!changed.length) throw new Blocked("The builder made no commits.");
   const bad = protectedViolations(changed, yml.protected_paths);
@@ -60,7 +68,10 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   const rg = await checkRedGreen({
     redCommits: () => redCommits(dir, repo.base_branch),
     head: () => git(dir, "rev-parse", "HEAD"),
-    checkout: async (ref) => void (await git(dir, "checkout", "--quiet", ref)),
+    checkout: async (ref) => {
+      step(`red-green check: testing at ${ref.slice(0, 8)}`);
+      await git(dir, "checkout", "--quiet", ref);
+    },
     install: () => install(yml, dir),
     test: async () => {
       const r = await runTests(yml, dir);
@@ -70,17 +81,30 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   if (!rg.ok) throw new Blocked(`Red-green check failed: ${rg.reason}`);
   await git(dir, "checkout", "--quiet", branch);
   state.update(key, repo.name, { redSha: rg.red, greenSha: rg.green }, { stage: "build", outcome: "red-green verified" });
+  // Tests written in the red commit and then changed later weaken the red proof. Not a block, but a human should look.
+  const redFiles = (await git(dir, "show", "--name-only", "--format=", rg.red)).split("\n").filter(Boolean);
+  const laterChanged = new Set((await git(dir, "diff", "--name-only", rg.red, rg.green)).split("\n"));
+  const testsEdited = redFiles.filter((f) => laterChanged.has(f));
+  if (testsEdited.length) log.warn(`${key}: tests from the red commit changed afterwards: ${testsEdited.join(", ")}`);
+  const editedNote = testsEdited.length
+    ? `**Check this:** tests from the red commit were changed after it: ${testsEdited.map((f) => `\`${f}\``).join(", ")}. Compare with \`git diff ${rg.red.slice(0, 8)} ${rg.green.slice(0, 8)} -- ${testsEdited.join(" ")}\` to make sure no assertion was weakened.`
+    : "";
 
   // 3. Evidence: start the app and screenshot each criterion.
+  // Playwright MCP writes named screenshots relative to the agent's cwd, so run
+  // the agent from inside the shots dir.
   const shotsDir = join(evidenceDir, "shots");
+  mkdirSync(shotsDir, { recursive: true });
+  step("starting the app for screenshots");
   const app = await startApp(yml, dir);
+  step("evidence agent taking screenshots");
   let evidenceList = "";
   try {
     const nav = existsSync(join(dir, yml.navigation_doc)) ? readFileSync(join(dir, yml.navigation_doc), "utf8") : "";
     const ev = await runClaude(env, {
       agent: "evidence-capture",
       label: `${key}-evidence`,
-      cwd: evidenceDir,
+      cwd: shotsDir,
       prompt: evidencePrompt(issue, app.url, nav),
       maxTurns: cfg.max_turns.evidence,
       model: cfg.models.verify,
@@ -103,7 +127,8 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   }
 
   // 4. Push and open the PR.
-  if (!env.dryRun) await git(dir, "push", "--force-with-lease", "-u", "origin", branch);
+  step("pushing and opening the PR");
+  if (!env.dryRun) await pushBranch(dir, repo.git, branch);
   const names = pngs.map((f) => f.split("/").pop()!);
   const imgs = names.map((n) => `![${n}](https://github.com/${slug}/blob/${branch}/${evidenceRel}/${n}?raw=true)`).join("\n");
   const body = [
@@ -119,6 +144,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
     `- Red: \`${rg.red.slice(0, 8)}\` - test suite **failed** as expected`,
     `- Green: \`${rg.green.slice(0, 8)}\` - full test suite **passed**`,
     `- Mode: \`${mode.name}\``,
+    editedNote ? `\n> ${editedNote}` : "",
     "",
     "## Screenshots",
     imgs || "_No screenshots captured._",
@@ -131,6 +157,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   state.update(key, repo.name, { prNumber: pr.number, prUrl: pr.url }, { stage: "build", outcome: `PR ${pr.url}` });
 
   // 5. Jira: screenshots, comment, status, labels.
+  step("updating Jira");
   await jira.attach(key, pngs.map((f) => join(shotsDir, f)));
   await jira.comment(
     key,
@@ -140,6 +167,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
       section(built.result, "Summary"),
       "",
       `Red-green verified by the factory (red \`${rg.red.slice(0, 8)}\`, green \`${rg.green.slice(0, 8)}\`). ${pngs.length} screenshot(s) attached.`,
+      editedNote,
     ].join("\n"),
   );
   if (cfg.statuses.review) await jira.transitionTo(key, cfg.statuses.review);

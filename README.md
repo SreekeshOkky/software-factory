@@ -36,6 +36,27 @@ Any failure, including a missing red commit, tests passing at red, a protected-p
 | `pr-reviewer` | Read/Grep/Glob | Run commands, post anything (the factory posts for it) |
 | `ticket-verifier` | Playwright only, run from an empty directory | See source code, the diff or the PR |
 
+### Security model
+
+**Who can trigger code execution:** anyone who can create or edit a Jira ticket with the `factory-enabled` label. The builder runs shell commands, and the ticket text is untrusted input, so treat the label as commit access.
+
+The container separates two Unix users:
+
+| User | Runs | Holds |
+| --- | --- | --- |
+| `factory` | The orchestrator: Jira and GitHub API calls, the network clone, and the final push | `GH_TOKEN`, `GH_REVIEWER_TOKEN`, `JIRA_API_TOKEN`, and `/data` (mode 0700) |
+| `agent` | Everything that runs model output or repo code: Claude, `install`, tests, the app, and git inside workspaces | Only the Claude token, through sudo's `env_keep` |
+
+How the separation holds:
+- **Running agent commands:** the factory starts them with `sudo -u agent /usr/local/bin/agent-exec`. sudo resets the environment, and that one rule is all the factory may run as `agent`. The agent itself can't use sudo.
+- **The tokens:** a different uid can't read the orchestrator's `/proc/<pid>/environ`, so the agent can't see the factory's tokens.
+- **Pushing:** the agent exports its branch as a `git bundle`. The factory fetches the bundle into its own clean repo and pushes from there, so hooks or config planted in the agent's `.git` never run with the token. Only `factory/*` branches can be pushed.
+
+**Still open:**
+- Agents have unrestricted outbound network access, so they could send repo contents elsewhere. Use an egress proxy if that matters to you.
+- The agent can read its own Claude token.
+- Commands in `factory.yml` run as `agent` and are trusted, because a human reviews them in the onboarding PR.
+
 ## Setup
 
 ### 1. Jira
@@ -91,7 +112,21 @@ Run one tick and exit (useful for debugging):
 docker compose run --rm factory node /app/orchestrator/dist/index.js --once
 ```
 
-The `/data` volume holds `state.json` (per-ticket PR, red/green SHAs, cost) and `runs/` (every agent's JSON transcript).
+## Watching progress
+
+| Question | Where to look |
+| --- | --- |
+| Which stage is every ticket at? | `docker compose exec factory status` lists each ticket with its stage and current step, when it last changed, its cost and its PR. |
+| What happened to one ticket? | `docker compose exec factory status KAN-4` shows the full timeline, the red/green commits and the last error. |
+| What's happening right now? | `docker compose logs -f`. Every step (`KAN-4 [build] installing dependencies`) and every agent tool call (`KAN-4-build › Edit src/…`, `› Bash npm test`) appears as it happens. |
+| Log after a container restart | `/data/factory.log` holds the same lines. Docker's own log is rotated at 5 × 20 MB. |
+| Exactly what an agent did | `/data/runs/KAN-4-build-<time>.jsonl` holds every message, tool call and tool result, streamed live. Claude Code's own session files persist in the `claude-transcripts` volume. |
+| From Jira | Labels show the stage. Comments mark the build start, PR, review, merge and verdict. |
+
+```bash
+docker compose exec factory tail -f /data/factory.log
+docker compose exec factory sh -c 'ls -t /data/runs/*.jsonl | head'
+```
 
 ## Development
 ```bash

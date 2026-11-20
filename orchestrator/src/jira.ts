@@ -25,6 +25,8 @@ export interface JiraOptions {
   token: string;
   dryRun?: boolean;
   fetchImpl?: typeof fetch;
+  /** Override backoff (tests). */
+  retryDelayMs?: number;
 }
 
 export class Jira {
@@ -37,7 +39,7 @@ export class Jira {
 
   private async req<T>(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     const isForm = body instanceof FormData;
-    const res = await this.f(`${this.o.baseUrl}${path}`, {
+    const res = await this.fetchRetry(`${this.o.baseUrl}${path}`, {
       method,
       headers: {
         Authorization: this.auth,
@@ -54,6 +56,22 @@ export class Jira {
     if (res.status === 204) return undefined as T;
     const text = await res.text();
     return (text ? JSON.parse(text) : undefined) as T;
+  }
+
+  /** Retries network failures (DNS, reset, laptop waking up) and 429/5xx, with backoff. */
+  private async fetchRetry(url: string, init: RequestInit, attempts = 4): Promise<Response> {
+    for (let i = 1; ; i++) {
+      try {
+        const res = await this.f(url, init);
+        if ((res.status === 429 || res.status >= 500) && i < attempts) throw new Error(`HTTP ${res.status}`);
+        return res;
+      } catch (e) {
+        if (i >= attempts) throw new Error(`Jira unreachable after ${attempts} tries: ${(e as Error & { cause?: Error }).cause?.message ?? (e as Error).message}`);
+        const wait = 2000 * 2 ** (i - 1);
+        log.warn(`Jira request failed (${(e as Error & { cause?: Error }).cause?.message ?? (e as Error).message}); retry ${i}/${attempts - 1} in ${wait / 1000}s`);
+        await new Promise((r) => setTimeout(r, this.o.retryDelayMs ?? wait));
+      }
+    }
   }
 
   private mutating(what: string): boolean {

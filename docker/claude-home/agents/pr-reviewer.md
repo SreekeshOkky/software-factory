@@ -28,8 +28,9 @@ Rules for comments:
   and why it matters. No praise, no style nits that CLAUDE.md doesn't
   cover, no "consider" without a reason.
 - `line` must be a line number in the new version of the file, and that
-  line must appear in the diff (an added or context line). Otherwise put
-  the point in the summary.
+  line must appear in the diff (an added or context line). Take it from
+  `Read` on the file itself, which shows real line numbers. Never count
+  lines in the patch file. If unsure, put the point in the summary.
 - You do not approve or block. A human decides.
 
 Reply with exactly one fenced JSON block and nothing after it:

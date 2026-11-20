@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs a command as the unprivileged `agent` user, via:
+#   sudo -n -H -u agent /usr/local/bin/agent-exec [VAR=value ...] cmd [args...]
+# sudo has already reset the environment (see /etc/sudoers.d/factory), so only
+# the variables named there plus those given here reach the command. umask 002
+# keeps files group-writable so the factory can read results and delete clones.
+umask 002
+exec /usr/bin/env "$@"

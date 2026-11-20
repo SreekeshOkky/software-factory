@@ -13,7 +13,14 @@ import { closeStage } from "./stages/close.js";
 import { Blocked, block, type Ctx } from "./stages/context.js";
 import { reviewStage } from "./stages/review.js";
 import { verifyStage } from "./stages/verify.js";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { removeDir } from "./workspace.js";
+
+async function cleanWorkspaces(ctx: Ctx, repo: RepoEntry, key: string, stage: string) {
+  const dir = join(ctx.env.workDir, repo.name);
+  if (!existsSync(dir)) return;
+  for (const d of readdirSync(dir)) if (d.startsWith(`${key}-${stage}`)) await removeDir(join(dir, d)).catch((e) => log.warn(String(e)));
+}
 
 type Stage = (ctx: Ctx, repo: RepoEntry, issue: Issue) => Promise<void>;
 
@@ -22,14 +29,20 @@ let stopping = false;
 async function runStage(ctx: Ctx, name: string, stage: Stage, repo: RepoEntry, key: string, cleanup: string[] = []) {
   const issue = await ctx.jira.getIssue(key);
   if (routeIssue(ctx.cfg.repos, issue)?.name !== repo.name) return;
-  log.info(`${key}: ${name}`);
+  // The close stage polls every tick while a PR waits for a human, so it stays quiet.
+  const tracked = name !== "close";
+  if (tracked) ctx.state.step(key, repo.name, name, "starting");
   try {
     await stage(ctx, repo, issue);
+    // Success: drop this stage's clones (node_modules add up fast). Failed stages keep theirs for debugging.
+    if (tracked) await cleanWorkspaces(ctx, repo, key, name);
   } catch (e) {
     const reason = e instanceof Blocked ? e.message : `Unexpected error: \`${e instanceof Error ? e.message : String(e)}\``;
     if (!(e instanceof Blocked)) log.error(e);
     // Block on every failure so a broken ticket can't burn tokens in a loop.
     await block(ctx, issue, repo, name, reason, cleanup).catch((err) => log.error("failed to mark blocked", err));
+  } finally {
+    if (tracked) ctx.state.update(key, repo.name, { stage: undefined, step: undefined });
   }
 }
 
@@ -44,12 +57,14 @@ export async function tick(ctx: Ctx): Promise<void> {
       const [next] = await ctx.jira.search(q.toBuild);
       if (next && !stopping) await runStage(ctx, "build", buildStage, repo, next, [LABELS.building]);
     } catch (e) {
-      log.error(`tick failed for ${repo.name}:`, e);
+      log.error(`tick failed for ${repo.name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }
 
 async function main() {
+  // Files the factory writes into /work stay group-writable for the agent user (shared `work` group).
+  process.umask(0o002);
   const cfg = loadFactoryConfig();
   const env = loadEnv();
   const tmpDir = join(env.dataDir, "tmp");
