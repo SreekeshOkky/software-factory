@@ -37,6 +37,8 @@ Any failure adds **`factory-blocked`** with a Jira comment explaining why. Examp
 - **A failed build** has already moved the ticket to In Progress, so also move it back to **To Do**. The rebuild force-pushes `factory/KEY`.
 - **A review, verify or close failure** retries as soon as the label is gone. A PR closed without merging blocks again until you reopen it.
 
+For every case (what the agents read from a ticket, every block reason, handling review comments and verifier verdicts, rebuilding a merged ticket and edge cases), see [docs/ticket-lifecycle.md](docs/ticket-lifecycle.md).
+
 ### Who can do what
 
 | Agent | Runs in | Tools | Can't |
