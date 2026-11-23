@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commentableLines, splitComments } from "../src/github.js";
 import { Jira } from "../src/jira.js";
+import { retryHint } from "../src/stages/context.js";
 
 const diff = `diff --git a/src/new.ts b/src/new.ts
 new file mode 100644
@@ -71,5 +72,16 @@ describe("Jira retries", () => {
     const j = new Jira({ baseUrl: "https://x", email: "e", token: "t", fetchImpl, retryDelayMs: 1 });
     await expect(j.search("q")).rejects.toThrow(/400/);
     expect(n).toBe(1);
+  });
+});
+
+describe("retryHint", () => {
+  it("tells a blocked build to go back to To Do", () => {
+    expect(retryHint("build", "To Do")).toContain("move the ticket back to **To Do**");
+  });
+  it("other stages only need the label removed", () => {
+    const h = retryHint("verify", "To Do");
+    expect(h).toContain("factory-blocked");
+    expect(h).not.toContain("To Do");
   });
 });
