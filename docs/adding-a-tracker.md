@@ -60,7 +60,7 @@ All of it is in [`types.ts`](../orchestrator/src/trackers/types.ts). Workflow de
 | `comment(key, markdown)` | Post a comment. The input is GitHub-flavoured Markdown (headings, bold, code, links, tables), so convert it if the tracker uses another format. |
 | `attach(key, files)` | Attach PNG screenshots to the ticket. |
 | `describe(repo)` | Return a short label for the startup log, e.g. `linear:WEB`. |
-| `agentMcpServers()` | Optional. Return the MCP servers to give the builder, e.g. Jira's Rovo. Their tools are allowed as `mcp__<name>__*`. |
+| `agentMcpServers()` | Optional. Return the MCP servers to give the builder, e.g. Jira's Rovo. Their tools are allowed as `mcp__<name>__*`; nothing else needs to list them (the builder's agent file deliberately has no `tools:` list, which would hide them). |
 
 ### The four queues
 

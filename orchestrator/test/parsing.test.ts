@@ -65,6 +65,10 @@ describe("claude invocation", () => {
   it("uses strict MCP config and an allowlist", () => {
     const a = claudeArgs({ agent: "pr-reviewer", prompt: "", cwd: ".", allowedTools: ["Read", "Grep"], maxTurns: 5, label: "x" }, "/m.json");
     expect(a).toEqual(expect.arrayContaining(["-p", "--agent", "pr-reviewer", "--strict-mcp-config", "--allowedTools", "Read,Grep"]));
+    expect(a).not.toContain("--tools");
+    expect(claudeArgs({ agent: "b", prompt: "", cwd: ".", tools: ["Read", "Bash"], allowedTools: [], maxTurns: 1, label: "x" }, "/m.json")).toEqual(
+      expect.arrayContaining(["--tools", "Read,Bash"]),
+    );
   });
   it("only adds servers a run asks for", () => {
     expect(mcpConfig({})).toEqual({ mcpServers: {} });

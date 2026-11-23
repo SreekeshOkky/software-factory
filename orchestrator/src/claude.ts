@@ -18,6 +18,12 @@ export interface ClaudeRun {
   prompt: string;
   cwd: string;
   allowedTools: string[];
+  /**
+   * Built-in tools the agent has (`--tools`). Use this, not a `tools:` list in the
+   * agent's frontmatter, for agents whose MCP servers vary per run: a frontmatter
+   * list also hides every MCP tool it doesn't name. MCP tools come from `mcp`.
+   */
+  tools?: string[];
   maxTurns: number;
   model?: string;
   mcp?: McpNeeds;
@@ -56,6 +62,7 @@ export function claudeArgs(r: ClaudeRun, mcpFile: string): string[] {
     "--strict-mcp-config",
     "--allowedTools", r.allowedTools.join(","),
   ];
+  if (r.tools) args.push("--tools", r.tools.join(","));
   if (r.model) args.push("--model", r.model);
   return args;
 }

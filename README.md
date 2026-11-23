@@ -43,7 +43,7 @@ For every case (what the agents read from a ticket, every block reason, handling
 
 | Agent | Runs in | Tools | Can't |
 | --- | --- | --- | --- |
-| `ticket-builder` | The clone, on `factory/KEY` | Read/Edit/Write/Bash/Grep/Glob, the `red-green` skill, Playwright, and Rovo MCP if enabled | `git push`, `gh`, `npm publish`, `vercel` and reading `.env*` are denied. It has no code-host or tracker token in its environment, and a protected-path change blocks the ticket. |
+| `ticket-builder` | The clone, on `factory/KEY` | Read/Edit/Write/Bash/Grep/Glob, the `red-green` skill, Playwright, and the tracker's MCP server if it has one (Rovo for Jira, if enabled) | `git push`, `gh`, `npm publish`, `vercel` and reading `.env*` are denied. It has no code-host or tracker token in its environment, and a protected-path change blocks the ticket. |
 | `evidence-capture` | An empty screenshots directory | Playwright only | Edit anything |
 | `pr-reviewer` | A clone of the PR branch | Read/Grep/Glob | Run commands, post anything (the factory posts for it) |
 | `ticket-verifier` | An empty screenshots directory | Playwright only | See source code, the diff, the PR or the builder's summary |

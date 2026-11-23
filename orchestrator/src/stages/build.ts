@@ -52,6 +52,8 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
     prompt: buildPrompt(issue, yml, mode, repo.base_branch),
     maxTurns: cfg.max_turns.build,
     model: cfg.models.build,
+    // The builder's frontmatter has no `tools:` list, so the tracker's MCP tools aren't hidden.
+    tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill"],
     allowedTools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill", "mcp__playwright__*", ...trackerMcpTools],
     mcp: { extraServers: trackerMcp, playwrightOutputDir: join(evidenceDir, "builder") },
   });
