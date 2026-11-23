@@ -4,13 +4,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:f
 import { join } from "node:path";
 import { lastJsonBlock, runClaude } from "../claude.js";
 import { LABELS, type RepoEntry } from "../config.js";
-import { slugFromGitUrl } from "../github.js";
-import type { Issue } from "../jira.js";
+import type { Issue } from "../trackers/index.js";
 import { log } from "../log.js";
 import { regressionPrompt, verifyPrompt } from "../prompts.js";
 import { loadRepoFactoryYml, type RepoFactoryYml } from "../repo.js";
 import { changedFiles, freshClone, git, install, pushBranch, removeDir, runTests, startApp, type RunningApp } from "../workspace.js";
-import { Blocked, workDirFor, type Ctx } from "./context.js";
+import { Blocked, hostFor, trackerFor, workDirFor, type Ctx } from "./context.js";
 
 export type Verdict = "PASS" | "FAIL" | "UNTESTABLE";
 export interface VerdictRow {
@@ -37,7 +36,8 @@ export function verdictTable(rows: VerdictRow[]): string {
 }
 
 export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promise<void> {
-  const { env, cfg, jira, state } = ctx;
+  const { env, cfg, state } = ctx;
+  const tracker = trackerFor(ctx, repo);
   const key = issue.key;
   const dir = workDirFor(ctx, repo, key, "verify");
   const shots = `${dir}-shots`;
@@ -46,7 +46,7 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
 
   const step = (s: string) => state.step(key, repo.name, "verify", s);
   step(`cloning ${repo.base_branch}`);
-  await freshClone(repo.git, dir, repo.base_branch);
+  await freshClone(hostFor(ctx, repo).remote(repo), dir, repo.base_branch);
   const yml = loadRepoFactoryYml(dir);
   if (!yml) throw new Blocked(`\`${repo.name}\` isn't onboarded (no factory.yml), so it can't be verified.`);
   step("installing dependencies");
@@ -83,11 +83,11 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   }
   if (!rows) throw new Blocked(`The verifier didn't return verdicts:\n\n${reply.slice(-1500)}`);
 
-  step("posting verdicts to Jira");
+  step("posting verdicts to the ticket");
   const failed = rows.filter((r) => r.verdict !== "PASS");
   const pngs = readdirSync(shots, { recursive: true }).map(String).filter((f) => f.endsWith(".png"));
-  await jira.attach(key, pngs.map((f) => join(shots, f)));
-  await jira.comment(
+  await tracker.attach(key, pngs.map((f) => join(shots, f)));
+  await tracker.comment(
     key,
     [
       `## Verification on \`${repo.base_branch}\`: ${failed.length ? `${failed.length} of ${rows.length} not passing` : `all ${rows.length} criteria pass`}`,
@@ -98,7 +98,7 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
       failed.length ? "\nA human decides whether to reopen the ticket or fix the criteria. UNTESTABLE usually means the criterion needs rewording." : "",
     ].join("\n"),
   );
-  await jira.updateLabels(key, [failed.length ? LABELS.verifyFailed : LABELS.verified]);
+  await tracker.updateLabels(key, [failed.length ? LABELS.verifyFailed : LABELS.verified]);
   state.update(key, repo.name, {}, { stage: "verify", outcome: failed.length ? `${failed.length} not passing` : "all pass" });
 }
 
@@ -119,12 +119,13 @@ async function regression(ctx: Ctx, repo: RepoEntry, issue: Issue, yml: RepoFact
   ctx.state.update(issue.key, repo.name, { costUsd: res.costUsd ?? 0 });
   if (!(await changedFiles(dir, repo.base_branch)).length) return;
   if ((await runTests(yml, dir)).code !== 0) throw new Error("regression suite does not pass");
-  if (!ctx.env.dryRun) await pushBranch(dir, repo.git, branch);
-  const pr = await ctx.gh.createPr(slugFromGitUrl(repo.git), {
+  const host = hostFor(ctx, repo);
+  if (!ctx.env.dryRun) await pushBranch(dir, host.remote(repo), branch);
+  const pr = await host.createPr(repo, {
     head: branch,
     base: repo.base_branch,
     title: `${issue.key}: regression tests`,
     body: `Playwright regression tests for [${issue.key}](${issue.url}), generated after every acceptance criterion passed verification.\n\n${res.result.slice(-3000)}`,
   });
-  await ctx.jira.comment(issue.key, `**Regression tests PR:** [${pr.url}](${pr.url})`);
+  await trackerFor(ctx, repo).comment(issue.key, `**Regression tests PR:** [${pr.url}](${pr.url})`);
 }

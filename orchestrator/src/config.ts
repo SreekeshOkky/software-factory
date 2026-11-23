@@ -3,16 +3,40 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
+import { hostVendorFor, inferHostType } from "./hosts/index.js";
+import { vendorFor } from "./trackers/index.js";
 
-const RepoEntry = z.object({
-  name: z.string().regex(/^[a-z0-9-]+$/, "repo name must be kebab-case"),
-  git: z.string().min(1),
-  base_branch: z.string().default("main"),
-  jira: z.object({
-    project: z.string().min(1),
-    component: z.string().optional(),
+export { LABELS } from "./labels.js";
+
+/** `tracker: { type: <vendor id>, ...vendor options }`. The vendor validates the options. */
+const TrackerRef = z.object({ type: z.string().min(1) }).passthrough();
+/** `host: { type: <vendor id>, ...vendor options }`. Optional when the git URL is on a known hostname. */
+const HostRef = z.object({ type: z.string().min(1) }, { required_error: "missing `host: { type: ... }`: the git URL isn't on a hostname the factory knows" }).passthrough();
+
+const RepoEntry = z.preprocess(
+  // Older configs say `jira: { project, component }`; read that as `tracker: { type: jira, ... }`.
+  // `host:` may be left out for github.com and other known hostnames.
+  (r) => {
+    if (!r || typeof r !== "object") return r;
+    let out = r as Record<string, unknown>;
+    if ("jira" in out && !("tracker" in out)) {
+      const { jira, ...rest } = out;
+      out = { ...rest, tracker: { type: "jira", ...(jira as object) } };
+    }
+    if (!("host" in out) && typeof out.git === "string") {
+      const type = inferHostType(out.git);
+      if (type) out = { ...out, host: { type } };
+    }
+    return out;
+  },
+  z.object({
+    name: z.string().regex(/^[a-z0-9-]+$/, "repo name must be kebab-case"),
+    git: z.string().min(1),
+    base_branch: z.string().default("main"),
+    tracker: TrackerRef,
+    host: HostRef,
   }),
-});
+);
 
 export const FactoryConfigSchema = z.object({
   poll_interval_seconds: z.number().int().positive().default(60),
@@ -51,6 +75,12 @@ export function parseFactoryConfig(text: string): FactoryConfig {
   for (const r of cfg.repos) {
     if (names.has(r.name)) throw new Error(`duplicate repo name: ${r.name}`);
     names.add(r.name);
+    const vendor = vendorFor(r.tracker.type);
+    const opts = vendor.repoConfig.safeParse(r.tracker);
+    if (!opts.success) throw new Error(`repo ${r.name}: invalid ${vendor.name} tracker config: ${opts.error.message}`);
+    const host = hostVendorFor(r.host.type);
+    const hostOpts = host.repoConfig.safeParse(r.host);
+    if (!hostOpts.success) throw new Error(`repo ${r.name}: invalid ${host.name} host config: ${hostOpts.error.message}`);
   }
   return cfg;
 }
@@ -59,48 +89,17 @@ export function loadFactoryConfig(path = process.env.FACTORY_CONFIG ?? "/app/fac
   return parseFactoryConfig(readFileSync(path, "utf8"));
 }
 
+/** Factory-wide environment. Credentials are read by each vendor (src/trackers/, src/hosts/). */
 export interface Env {
-  jiraBaseUrl: string;
-  jiraEmail: string;
-  jiraToken: string;
-  jiraRovoMcp: boolean;
-  jiraRovoMcpUrl: string;
-  ghToken: string;
-  ghReviewerToken: string;
   dataDir: string;
   workDir: string;
   dryRun: boolean;
 }
 
-function req(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`missing env ${name}`);
-  return v;
-}
-
 export function loadEnv(): Env {
-  const ghToken = req("GH_TOKEN");
   return {
-    jiraBaseUrl: req("JIRA_BASE_URL").replace(/\/+$/, ""),
-    jiraEmail: req("JIRA_EMAIL"),
-    jiraToken: req("JIRA_API_TOKEN"),
-    jiraRovoMcp: process.env.JIRA_ROVO_MCP === "true",
-    jiraRovoMcpUrl: process.env.JIRA_ROVO_MCP_URL ?? "https://mcp.atlassian.com/v1/mcp",
-    ghToken,
-    ghReviewerToken: process.env.GH_REVIEWER_TOKEN || ghToken,
     dataDir: process.env.DATA_DIR ?? "/data",
     workDir: process.env.WORK_DIR ?? "/work",
     dryRun: process.env.DRY_RUN === "true",
   };
 }
-
-/** Labels the factory uses to mark progress on a ticket. Jira-safe (no spaces). */
-export const LABELS = {
-  building: "factory-building",
-  prOpen: "factory-pr-open",
-  reviewed: "factory-reviewed",
-  merged: "factory-merged",
-  blocked: "factory-blocked",
-  verified: "factory-verified",
-  verifyFailed: "factory-verify-failed",
-} as const;

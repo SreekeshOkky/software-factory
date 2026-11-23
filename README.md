@@ -43,7 +43,7 @@ For every case (what the agents read from a ticket, every block reason, handling
 
 | Agent | Runs in | Tools | Can't |
 | --- | --- | --- | --- |
-| `ticket-builder` | The clone, on `factory/KEY` | Read/Edit/Write/Bash/Grep/Glob, the `red-green` skill, Playwright, and Rovo MCP if enabled | `git push`, `gh`, `npm publish`, `vercel` and reading `.env*` are denied. It has no GitHub or Jira token in its environment, and a protected-path change blocks the ticket. |
+| `ticket-builder` | The clone, on `factory/KEY` | Read/Edit/Write/Bash/Grep/Glob, the `red-green` skill, Playwright, and the tracker's MCP server if it has one (Rovo for Jira, if enabled) | `git push`, `gh`, `npm publish`, `vercel` and reading `.env*` are denied. It has no code-host or tracker token in its environment, and a protected-path change blocks the ticket. |
 | `evidence-capture` | An empty screenshots directory | Playwright only | Edit anything |
 | `pr-reviewer` | A clone of the PR branch | Read/Grep/Glob | Run commands, post anything (the factory posts for it) |
 | `ticket-verifier` | An empty screenshots directory | Playwright only | See source code, the diff, the PR or the builder's summary |
@@ -58,13 +58,13 @@ The container separates two Unix users:
 
 | User | Runs | Holds |
 | --- | --- | --- |
-| `factory` | The orchestrator: Jira and GitHub API calls, the network clone, and the final push | `GH_TOKEN`, `GH_REVIEWER_TOKEN`, `JIRA_API_TOKEN`, and `/data` (mode 0700) |
+| `factory` | The orchestrator: tracker and code-host API calls, the network clone, and the final push | `GH_TOKEN`, `GH_REVIEWER_TOKEN`, `JIRA_API_TOKEN`, and `/data` (mode 0700) |
 | `agent` | Everything that runs model output or repo code: Claude, `install`, tests, the app, and git inside workspaces | Only the Claude token, through sudo's `env_keep` |
 
 How the separation holds:
 - **Running agent commands:** the factory starts them with `sudo -u agent /usr/local/bin/agent-exec`. sudo resets the environment, and that one rule is all the factory may run as `agent`. The agent itself can't use sudo.
 - **The tokens:** a different uid can't read the orchestrator's `/proc/<pid>/environ`, so the agent can't see the factory's tokens.
-- **Cloning:** the factory clones from GitHub, then the agent clones that local copy, so the agent's repo never had the token.
+- **Cloning:** the factory clones from the code host, then the agent clones that local copy, so the agent's repo never had the token. The token reaches only the factory's own `git clone` and `git push`, as environment variables (no git config file holds it).
 - **Pushing:** the agent exports its branch as a `git bundle`. The factory fetches the bundle into its own clean repo and pushes from there, so hooks or config planted in the agent's `.git` never run with the token. Only `factory/*` branches can be pushed.
 - **Protected paths:** `.env`, `.env.*` and `factory.yml` are always protected, on top of the repo's own `protected_paths`.
 
@@ -86,7 +86,9 @@ How the separation holds:
 - `GH_TOKEN`: clone, push and create PRs on the target repos (fine-grained: Contents and Pull requests read/write).
 - `GH_REVIEWER_TOKEN`: a second bot account for reviews, recommended. Without it, reviews post as the PR author.
 
-Repos can be listed with SSH URLs. The container rewrites them to HTTPS and uses the token, so it needs no SSH keys.
+Repos can be listed with SSH URLs. The factory rewrites them to HTTPS and uses the token for its own clone and push only, so the container needs no SSH keys.
+
+Code is on GitHub today. Each code host is a vendor in `orchestrator/src/hosts/`, and adding GitLab, Bitbucket or another host needs no changes to the stages: see [docs/adding-a-code-host.md](docs/adding-a-code-host.md).
 
 ### 3. Claude
 Use either:
@@ -100,9 +102,10 @@ repos:
   - name: portfolio          # kebab-case, unique
     git: git@github.com:SreekeshOkky/portfolio.git
     base_branch: main
-    jira: { project: KAN }   # add `component: web` to route one project to several repos
+    tracker: { type: jira, project: KAN }   # add `component: web` to route one project to several repos
+    # host: { type: github }               # optional: inferred from github.com URLs
 ```
-No code changes are needed to add a repo.
+No code changes are needed to add a repo. The older `jira: { project: KAN }` form still works.
 
 ### 5. Onboard each repo
 Run the `onboard-repo` skill on the repo, either in Claude Code on your machine or in the container. Load it from `plugins/factory/` as a plugin, or copy `plugins/factory/skills/onboard-repo/` into `~/.claude/skills/`. Then run:
@@ -127,7 +130,7 @@ cp .env.example .env   # fill it in
 ```bash
 DRY_RUN=true docker compose run --rm factory node /app/orchestrator/dist/index.js --once
 ```
-Dry run skips every Jira and GitHub write and the push, and logs what it would do. **It still runs the agents, so it costs tokens**, and because no labels change, a long-running dry run rebuilds the same ticket every poll. Use it with `--once`.
+Dry run skips every tracker and code-host write and the push, and logs what it would do. **It still runs the agents, so it costs tokens**, and because no labels change, a long-running dry run rebuilds the same ticket every poll. Use it with `--once`.
 
 ```bash
 docker compose up -d --build && docker compose logs -f
@@ -154,9 +157,13 @@ Mounted read-only into the container, so edits need only a restart.
 | `max_turns.build` / `evidence` / `review` / `verify` | `150` / `40` / `40` / `60` | Turn budget per agent run |
 | `models.build` / `review` / `verify` | `opus` / `opus` / `sonnet` | `claude --model` alias per role. The evidence agent uses `verify`; regression tests use `build`. |
 | `regression_tests` | `false` | Open a Playwright regression-test PR after a fully passing verification |
-| `repos[]` | (at least one) | `name`, `git`, `base_branch` (default `main`), `jira.project`, optional `jira.component` |
+| `repos[]` | (at least one) | `name`, `git`, `base_branch` (default `main`), `tracker` and `host` |
+| `repos[].host` | inferred for `github.com` | `type` (the code host: `github`) plus that host's options. Required when the git URL isn't on a known hostname. |
+| `repos[].tracker` | (required) | `type` (the vendor: `jira`) plus that vendor's options. For Jira: `project`, and optional `component`. |
 
-Tickets route to a repo by project, then component: a repo with a matching `component` wins over one without.
+For Jira, tickets route to a repo by project, then component: a repo with a matching `component` wins over one without.
+
+Tickets come from Jira today. Every tracker vendor lives in `orchestrator/src/trackers/`, and adding one (GitHub Issues, GitLab, Linear, Asana, ...) needs no changes to the stages: see [docs/adding-a-tracker.md](docs/adding-a-tracker.md).
 
 ### `factory.yml` (per repo)
 
@@ -179,14 +186,14 @@ The only thing the factory knows about a repo. `onboard-repo` writes it from [th
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | one of them | Claude auth |
-| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | yes | Jira Cloud site and factory account |
+| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | if a repo uses Jira | Jira Cloud site and factory account |
 | `JIRA_ROVO_MCP`, `JIRA_ROVO_MCP_URL` | no | Give the builder Rovo MCP (default off) |
-| `GH_TOKEN` | yes | Clone, push and open PRs |
+| `GH_TOKEN` | if a repo is on GitHub | Clone, push and open PRs |
 | `GH_REVIEWER_TOKEN` | no | Post reviews from a second account (falls back to `GH_TOKEN`) |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | no | Identity on factory commits |
-| `DRY_RUN` | no | `true` skips Jira and GitHub writes (see [Run](#6-run)) |
+| `DRY_RUN` | no | `true` skips tracker and code-host writes (see [Run](#6-run)) |
 
-The container refuses to start without the required ones. Build args `CLAUDE_CODE_VERSION` and `PLAYWRIGHT_MCP_VERSION` pin the CLI versions (default `latest`).
+The container refuses to start without the required ones. Each tracker's and code host's variables are checked only if a repo uses it. Build args `CLAUDE_CODE_VERSION` and `PLAYWRIGHT_MCP_VERSION` pin the CLI versions (default `latest`).
 
 ## Watching progress
 
@@ -223,9 +230,11 @@ Layout:
 - `orchestrator/src/index.ts`: the poll loop
 - `stages/*`: one file per lifecycle step (`build`, `review`, `close`, `verify`), plus the shared `context.ts` and blocking logic
 - `redgreen.ts`: the TDD check
-- `repo.ts`: the `factory.yml` contract, ticket modes, protected paths and routing
-- `config.ts`: `factory.config.yml`, environment and labels
-- `jira.ts`, `github.ts`, `claude.ts`: clients
+- `repo.ts`: the `factory.yml` contract, ticket modes and protected paths
+- `config.ts`: `factory.config.yml` and environment. `labels.ts`: the progress labels
+- `trackers/`: ticket-tracker vendors behind one `Tracker` interface (`types.ts`), registered in `index.ts`. `trackers/jira/` is the Jira Cloud client.
+- `hosts/`: code-host vendors behind one `CodeHost` interface (`types.ts`), registered in `index.ts`, with shared `diff.ts` and `git.ts` helpers. `hosts/github/` is the GitHub client.
+- `claude.ts`: the agent runner
 - `prompts.ts`: what each agent is told
 - `workspace.ts`, `exec.ts`: clones, pushes, the app process and the `agent` user boundary
 - `state.ts`, `status.ts`, `log.ts`: progress tracking and the `status` command
@@ -238,6 +247,6 @@ Layout:
 - **One ticket at a time.** The dev server port and the preview data are shared.
 - **Reviews run once per PR.** New pushes after the review don't trigger another one.
 - **The verifier runs after merge, against the base branch,** as requested. The article argues for verifying a preview *before* merge. Moving the verify stage before the human gate is a small change in `index.ts`.
-- **Screenshots are committed to the PR branch** under `.factory/evidence/KEY/`. GitHub has no API for uploading images, so this is how the PR shows them.
+- **Screenshots are committed to the PR branch** under `.factory/evidence/KEY/`. GitHub has no API for uploading images, so this is how the PR shows them. Each code host decides the image link (`CodeHost.fileUrl`).
 - **Timeouts:** 90 minutes per agent run, 20 for `install`, 30 for `test`, and 5 for the app to become ready.
 - **A failed regression-test PR** is only logged. It doesn't block the ticket.

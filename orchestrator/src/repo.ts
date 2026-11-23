@@ -5,8 +5,7 @@ import { join } from "node:path";
 import { minimatch } from "minimatch";
 import { parse } from "yaml";
 import { z } from "zod";
-import type { RepoEntry } from "./config.js";
-import type { Issue } from "./jira.js";
+import type { Issue } from "./trackers/index.js";
 
 const TicketMode = z.object({
   match: z
@@ -66,13 +65,4 @@ export function selectMode(yml: RepoFactoryYml, issue: Pick<Issue, "labels" | "i
 export function protectedViolations(changed: string[], globs: string[]): string[] {
   const all = [...globs, ".env", ".env.*", "**/.env", "**/.env.*", "factory.yml"];
   return changed.filter((f) => all.some((g) => minimatch(f, g, { dot: true })));
-}
-
-/** Which configured repo a ticket belongs to (by project, then component if set). */
-export function routeIssue(repos: RepoEntry[], issue: Pick<Issue, "project" | "components">): RepoEntry | undefined {
-  const inProject = repos.filter((r) => r.jira.project === issue.project);
-  return (
-    inProject.find((r) => r.jira.component && issue.components.includes(r.jira.component)) ??
-    inProject.find((r) => !r.jira.component)
-  );
 }

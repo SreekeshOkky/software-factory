@@ -3,16 +3,15 @@
 // previews share state (one dev server port, one QA dataset).
 import { join } from "node:path";
 import { LABELS, loadEnv, loadFactoryConfig, type RepoEntry } from "./config.js";
-import { GitHub } from "./github.js";
-import { Jira, jqlFor, type Issue } from "./jira.js";
 import { log } from "./log.js";
-import { routeIssue } from "./repo.js";
 import { StateStore } from "./state.js";
 import { buildStage } from "./stages/build.js";
 import { closeStage } from "./stages/close.js";
-import { Blocked, block, type Ctx } from "./stages/context.js";
+import { Blocked, block, trackerFor, type Ctx } from "./stages/context.js";
 import { reviewStage } from "./stages/review.js";
 import { verifyStage } from "./stages/verify.js";
+import { createCodeHosts } from "./hosts/index.js";
+import { createTrackers, type Issue } from "./trackers/index.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { removeDir } from "./workspace.js";
 
@@ -27,8 +26,9 @@ type Stage = (ctx: Ctx, repo: RepoEntry, issue: Issue) => Promise<void>;
 let stopping = false;
 
 async function runStage(ctx: Ctx, name: string, stage: Stage, repo: RepoEntry, key: string, cleanup: string[] = []) {
-  const issue = await ctx.jira.getIssue(key);
-  if (routeIssue(ctx.cfg.repos, issue)?.name !== repo.name) return;
+  const tracker = trackerFor(ctx, repo);
+  const issue = await tracker.getIssue(key);
+  if (ctx.trackers.route(tracker, issue)?.name !== repo.name) return;
   // The close stage polls every tick while a PR waits for a human, so it stays quiet.
   const tracked = name !== "close";
   if (tracked) ctx.state.step(key, repo.name, name, "starting");
@@ -49,12 +49,12 @@ async function runStage(ctx: Ctx, name: string, stage: Stage, repo: RepoEntry, k
 export async function tick(ctx: Ctx): Promise<void> {
   for (const repo of ctx.cfg.repos) {
     if (stopping) return;
-    const q = jqlFor(ctx.cfg, repo, LABELS);
     try {
-      for (const key of await ctx.jira.search(q.toClose)) await runStage(ctx, "close", closeStage, repo, key);
-      for (const key of await ctx.jira.search(q.toVerify)) await runStage(ctx, "verify", verifyStage, repo, key);
-      for (const key of await ctx.jira.search(q.toReview)) await runStage(ctx, "review", reviewStage, repo, key);
-      const [next] = await ctx.jira.search(q.toBuild);
+      const tracker = trackerFor(ctx, repo);
+      for (const key of await tracker.find("toClose", repo)) await runStage(ctx, "close", closeStage, repo, key);
+      for (const key of await tracker.find("toVerify", repo)) await runStage(ctx, "verify", verifyStage, repo, key);
+      for (const key of await tracker.find("toReview", repo)) await runStage(ctx, "review", reviewStage, repo, key);
+      const [next] = await tracker.find("toBuild", repo);
       if (next && !stopping) await runStage(ctx, "build", buildStage, repo, next, [LABELS.building]);
     } catch (e) {
       log.error(`tick failed for ${repo.name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -72,11 +72,11 @@ async function main() {
   const ctx: Ctx = {
     cfg,
     env,
-    jira: new Jira({ baseUrl: env.jiraBaseUrl, email: env.jiraEmail, token: env.jiraToken, dryRun: env.dryRun }),
-    gh: new GitHub({ token: env.ghToken, reviewerToken: env.ghReviewerToken, dryRun: env.dryRun, tmpDir }),
+    trackers: createTrackers(cfg, env.dryRun),
+    hosts: createCodeHosts(cfg, env.dryRun, tmpDir),
     state: new StateStore(join(env.dataDir, "state.json")),
   };
-  log.info(`factory up: ${cfg.repos.map((r) => `${r.name}<-${r.jira.project}`).join(", ")}${env.dryRun ? " (dry run)" : ""}`);
+  log.info(`factory up: ${cfg.repos.map((r) => `${ctx.hosts.for(r).describe(r)}<-${ctx.trackers.for(r).describe(r)}`).join(", ")}${env.dryRun ? " (dry run)" : ""}`);
 
   const once = process.argv.includes("--once");
   for (const sig of ["SIGINT", "SIGTERM"] as const) {

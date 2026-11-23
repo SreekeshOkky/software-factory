@@ -3,11 +3,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastJsonBlock, runClaude } from "../claude.js";
 import { LABELS, type RepoEntry } from "../config.js";
-import { slugFromGitUrl, type ReviewComment } from "../github.js";
-import type { Issue } from "../jira.js";
+import type { ReviewComment } from "../hosts/index.js";
+import type { Issue } from "../trackers/index.js";
 import { reviewPrompt } from "../prompts.js";
 import { branchFor, freshClone } from "../workspace.js";
-import { Blocked, workDirFor, type Ctx } from "./context.js";
+import { Blocked, hostFor, trackerFor, workDirFor, type Ctx } from "./context.js";
 
 export interface ReviewOutput {
   summary: string;
@@ -37,18 +37,19 @@ export function reviewBody(r: ReviewOutput): string {
 }
 
 export async function reviewStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promise<void> {
-  const { gh, jira, env, cfg, state } = ctx;
-  const slug = slugFromGitUrl(repo.git);
-  const pr = await gh.findPr(slug, branchFor(issue.key));
+  const { env, cfg, state } = ctx;
+  const host = hostFor(ctx, repo);
+  const tracker = trackerFor(ctx, repo);
+  const pr = await host.findPr(repo, branchFor(issue.key));
   if (!pr) throw new Blocked(`Label \`${LABELS.prOpen}\` is set but no PR exists for branch \`${branchFor(issue.key)}\`.`);
   if (pr.state !== "OPEN") return; // close stage handles merged/closed PRs
 
   const step = (s: string) => state.step(issue.key, repo.name, "review", s);
   step(`cloning PR #${pr.number}`);
   const dir = workDirFor(ctx, repo, issue.key, "review");
-  await freshClone(repo.git, dir, pr.headRefName);
+  await freshClone(host.remote(repo), dir, pr.headRefName);
   const diffPath = join(`${dir}-diff.patch`);
-  const diff = await gh.diff(slug, pr.number);
+  const diff = await host.diff(repo, pr);
   writeFileSync(diffPath, diff);
 
   step("review agent reading the diff");
@@ -66,12 +67,12 @@ export async function reviewStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
   if (!review) throw new Blocked(`The review agent didn't return a parseable review:\n\n${res.result.slice(-1500)}`);
 
   step(`posting ${review.comments.length} review comment(s)`);
-  await gh.postReview(slug, pr.number, pr.headRefOid, reviewBody(review), review.comments, diff);
+  await host.postReview(repo, pr, reviewBody(review), review.comments, diff);
   const high = review.comments.filter((c) => c.severity === "high").length;
-  await jira.comment(
+  await tracker.comment(
     issue.key,
     `**Review posted on [PR #${pr.number}](${pr.url})**: ${review.comments.length} comment(s), ${high} high severity. Waiting for a human to review and merge.`,
   );
-  await jira.updateLabels(issue.key, [LABELS.reviewed]);
+  await tracker.updateLabels(issue.key, [LABELS.reviewed]);
   state.update(issue.key, repo.name, {}, { stage: "review", outcome: `${review.comments.length} comments` });
 }

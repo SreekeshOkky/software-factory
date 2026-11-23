@@ -3,26 +3,26 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync, existsSync, rmSync 
 import { join } from "node:path";
 import { runClaude } from "../claude.js";
 import { LABELS, type RepoEntry } from "../config.js";
-import { slugFromGitUrl } from "../github.js";
-import type { Issue } from "../jira.js";
+import type { Issue } from "../trackers/index.js";
 import { log } from "../log.js";
 import { buildPrompt, evidencePrompt } from "../prompts.js";
 import { agentStatus, checkRedGreen, section } from "../redgreen.js";
 import { loadRepoFactoryYml, protectedViolations, selectMode } from "../repo.js";
 import { branchFor, changedFiles, freshClone, git, install, pushBranch, redCommits, removeDir, runTests, startApp } from "../workspace.js";
-import { Blocked, workDirFor, type Ctx } from "./context.js";
+import { Blocked, hostFor, trackerFor, workDirFor, type Ctx } from "./context.js";
 
 export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promise<void> {
-  const { jira, gh, cfg, env, state } = ctx;
+  const { cfg, env, state } = ctx;
+  const host = hostFor(ctx, repo);
+  const tracker = trackerFor(ctx, repo);
   const key = issue.key;
   const branch = branchFor(key);
-  const slug = slugFromGitUrl(repo.git);
 
   const step = (s: string) => state.step(key, repo.name, "build", s);
-  await jira.updateLabels(key, [LABELS.building]);
-  await jira.transitionTo(key, cfg.statuses.in_progress);
+  await tracker.updateLabels(key, [LABELS.building]);
+  await tracker.transitionTo(key, cfg.statuses.in_progress);
   state.update(key, repo.name, { branch }, { stage: "build", outcome: "started" });
-  await jira.comment(
+  await tracker.comment(
     key,
     `**Factory started building** on branch \`${branch}\`. It will write failing tests first, then the implementation, then open a PR. Labels on this ticket show the current stage.`,
   );
@@ -33,7 +33,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
   mkdirSync(evidenceDir, { recursive: true });
 
   step(`cloning ${repo.base_branch}`);
-  await freshClone(repo.git, dir, repo.base_branch);
+  await freshClone(host.remote(repo), dir, repo.base_branch);
   const yml = loadRepoFactoryYml(dir);
   if (!yml) throw new Blocked(`\`${repo.name}\` has no factory.yml on \`${repo.base_branch}\`, so it isn't onboarded. Run the onboard-repo skill on it first.`);
   await git(dir, "checkout", "-b", branch);
@@ -42,6 +42,8 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
 
   // 1. Build: red, green, refactor.
   const mode = selectMode(yml, issue);
+  const trackerMcp = tracker.agentMcpServers?.() ?? {};
+  const trackerMcpTools = Object.keys(trackerMcp).map((name) => `mcp__${name}__*`);
   step(`builder agent working (mode "${mode.name}")`);
   const built = await runClaude(env, {
     agent: "ticket-builder",
@@ -50,8 +52,10 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
     prompt: buildPrompt(issue, yml, mode, repo.base_branch),
     maxTurns: cfg.max_turns.build,
     model: cfg.models.build,
-    allowedTools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill", "mcp__atlassian__*", "mcp__playwright__*"],
-    mcp: { jira: true, playwrightOutputDir: join(evidenceDir, "builder") },
+    // The builder's frontmatter has no `tools:` list, so the tracker's MCP tools aren't hidden.
+    tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill"],
+    allowedTools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob", "Skill", "mcp__playwright__*", ...trackerMcpTools],
+    mcp: { extraServers: trackerMcp, playwrightOutputDir: join(evidenceDir, "builder") },
   });
   state.update(key, repo.name, { costUsd: built.costUsd ?? 0 });
   const status = agentStatus(built.result);
@@ -128,9 +132,9 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
 
   // 4. Push and open the PR.
   step("pushing and opening the PR");
-  if (!env.dryRun) await pushBranch(dir, repo.git, branch);
+  if (!env.dryRun) await pushBranch(dir, host.remote(repo), branch);
   const names = pngs.map((f) => f.split("/").pop()!);
-  const imgs = names.map((n) => `![${n}](https://github.com/${slug}/blob/${branch}/${evidenceRel}/${n}?raw=true)`).join("\n");
+  const imgs = names.map((n) => `![${n}](${host.fileUrl(repo, branch, `${evidenceRel}/${n}`)})`).join("\n");
   const body = [
     `Implements [${key}](${issue.url}): ${issue.summary}`,
     "",
@@ -153,13 +157,13 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
     "---",
     "Opened by the software factory. A review agent will comment; a human merges.",
   ].join("\n");
-  const pr = await gh.createPr(slug, { head: branch, base: repo.base_branch, title: `${key}: ${issue.summary}`, body });
+  const pr = await host.createPr(repo, { head: branch, base: repo.base_branch, title: `${key}: ${issue.summary}`, body });
   state.update(key, repo.name, { prNumber: pr.number, prUrl: pr.url }, { stage: "build", outcome: `PR ${pr.url}` });
 
-  // 5. Jira: screenshots, comment, status, labels.
-  step("updating Jira");
-  await jira.attach(key, pngs.map((f) => join(shotsDir, f)));
-  await jira.comment(
+  // 5. Ticket: screenshots, comment, status, labels.
+  step("updating the ticket");
+  await tracker.attach(key, pngs.map((f) => join(shotsDir, f)));
+  await tracker.comment(
     key,
     [
       `**PR opened:** [${pr.url}](${pr.url})`,
@@ -170,7 +174,7 @@ export async function buildStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promi
       editedNote,
     ].join("\n"),
   );
-  if (cfg.statuses.review) await jira.transitionTo(key, cfg.statuses.review);
-  await jira.updateLabels(key, [LABELS.prOpen], [LABELS.building]);
+  if (cfg.statuses.review) await tracker.transitionTo(key, cfg.statuses.review);
+  await tracker.updateLabels(key, [LABELS.prOpen], [LABELS.building]);
   log.info(`${key}: PR ${pr.url}`);
 }

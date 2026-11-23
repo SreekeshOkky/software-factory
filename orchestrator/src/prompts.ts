@@ -1,7 +1,7 @@
 // Prompts for each agent. Each agent gets only what its job needs: the
 // builder gets the ticket and repo rules, the reviewer the ticket and diff,
 // the verifier the ticket and the app, never the code.
-import type { Issue } from "./jira.js";
+import type { Issue } from "./trackers/index.js";
 import type { RepoFactoryYml } from "./repo.js";
 
 function ticketBlock(issue: Issue): string {
@@ -10,7 +10,7 @@ function ticketBlock(issue: Issue): string {
     `URL: ${issue.url}`,
     `Summary: ${issue.summary}`,
     "",
-    "Description (Jira wiki markup):",
+    `Description (${issue.descriptionFormat}):`,
     "<<<TICKET",
     issue.description.trim() || "(empty)",
     "TICKET>>>",

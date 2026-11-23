@@ -1,5 +1,5 @@
 # The orchestrator (factory) may run agent-exec as the agent user, nothing else.
-# env_reset drops the factory's GitHub and Jira tokens; only these pass through.
+# env_reset drops the factory's code-host and tracker tokens; only these pass through.
 Defaults:factory env_reset, !requiretty, !lecture
 Defaults:factory env_keep = "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY PLAYWRIGHT_BROWSERS_PATH DISABLE_AUTOUPDATER NPM_CONFIG_UPDATE_NOTIFIER GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL"
 factory ALL=(agent) NOPASSWD: /usr/local/bin/agent-exec

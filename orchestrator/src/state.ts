@@ -1,4 +1,4 @@
-// Local memory of what the factory did per ticket. Jira labels are the
+// Local memory of what the factory did per ticket. Tracker labels are the
 // source of truth for "which stage is next"; this file keeps the details
 // (PR number, red commit, costs, the step in progress) and survives restarts
 // on the /data volume. `status.ts` prints it.

@@ -9,8 +9,8 @@ import { log } from "./log.js";
 export interface McpNeeds {
   /** Directory for Playwright MCP output (screenshots). Omit for no browser. */
   playwrightOutputDir?: string;
-  /** Give the agent the Atlassian Rovo MCP server (if enabled in env). */
-  jira?: boolean;
+  /** More MCP servers by name, e.g. the ticket tracker's (`Tracker.agentMcpServers`). */
+  extraServers?: Record<string, object>;
 }
 
 export interface ClaudeRun {
@@ -18,6 +18,12 @@ export interface ClaudeRun {
   prompt: string;
   cwd: string;
   allowedTools: string[];
+  /**
+   * Built-in tools the agent has (`--tools`). Use this, not a `tools:` list in the
+   * agent's frontmatter, for agents whose MCP servers vary per run: a frontmatter
+   * list also hides every MCP tool it doesn't name. MCP tools come from `mcp`.
+   */
+  tools?: string[];
   maxTurns: number;
   model?: string;
   mcp?: McpNeeds;
@@ -33,7 +39,7 @@ export interface ClaudeResult {
   sessionId?: string;
 }
 
-export function mcpConfig(env: Env, needs: McpNeeds = {}): object {
+export function mcpConfig(needs: McpNeeds = {}): object {
   const servers: Record<string, object> = {};
   if (needs.playwrightOutputDir) {
     servers.playwright = {
@@ -42,13 +48,7 @@ export function mcpConfig(env: Env, needs: McpNeeds = {}): object {
       args: ["--headless", "--isolated", "--no-sandbox", "--browser", "chromium", "--output-dir", needs.playwrightOutputDir],
     };
   }
-  if (needs.jira && env.jiraRovoMcp) {
-    servers.atlassian = {
-      type: "http",
-      url: env.jiraRovoMcpUrl,
-      headers: { Authorization: "Basic " + Buffer.from(`${env.jiraEmail}:${env.jiraToken}`).toString("base64") },
-    };
-  }
+  Object.assign(servers, needs.extraServers);
   return { mcpServers: servers };
 }
 
@@ -62,6 +62,7 @@ export function claudeArgs(r: ClaudeRun, mcpFile: string): string[] {
     "--strict-mcp-config",
     "--allowedTools", r.allowedTools.join(","),
   ];
+  if (r.tools) args.push("--tools", r.tools.join(","));
   if (r.model) args.push("--model", r.model);
   return args;
 }
@@ -71,11 +72,11 @@ export async function runClaude(env: Env, r: ClaudeRun): Promise<ClaudeResult> {
   mkdirSync(runsDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   // The agent user must read its MCP config, but not /data. Only the agent's own MCP
-  // credentials (Rovo, if enabled) are in it; it is deleted when the run ends.
+  // credentials (a tracker's MCP server, if any) are in it; it is deleted when the run ends.
   const mcpDir = join(env.workDir, ".agent-runs");
   mkdirSync(mcpDir, { recursive: true });
   const mcpFile = join(mcpDir, `${r.label}-${stamp}.mcp.json`);
-  writeFileSync(mcpFile, JSON.stringify(mcpConfig(env, r.mcp)), { mode: 0o640 });
+  writeFileSync(mcpFile, JSON.stringify(mcpConfig(r.mcp)), { mode: 0o640 });
 
   // Full event stream (every message and tool call) for this run, written as it happens.
   const transcript = join(runsDir, `${r.label}-${stamp}.jsonl`);
@@ -91,7 +92,7 @@ export async function runClaude(env: Env, r: ClaudeRun): Promise<ClaudeResult> {
     input: r.prompt,
     timeoutMs: 90 * 60_000,
     tailChars: 200_000,
-    // Runs as the agent user: sudo drops the orchestrator's GitHub/Jira tokens.
+    // Runs as the agent user: sudo drops the orchestrator's GitHub and tracker tokens.
     asAgent: true,
     onLine: (line) => {
       appendFileSync(transcript, line + "\n");

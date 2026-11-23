@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LABELS, parseFactoryConfig } from "../src/config.js";
-import { Jira, jqlFor, mdToWiki } from "../src/jira.js";
+import { Jira, jqlFor, mdToWiki } from "../src/trackers/jira/index.js";
 
 const cfg = parseFactoryConfig(`
 statuses: { todo: To Do, in_progress: In Progress, review: In Review, done: Done }

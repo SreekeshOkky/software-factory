@@ -1,35 +1,45 @@
-// Jira Cloud REST client. Every status change, label and comment goes through
+// Jira Cloud tracker. Every status change, label and comment goes through
 // here: plain code, never an agent, decides workflow state.
 // v2 endpoints are used for issue text and comments because they speak wiki
 // markup strings instead of ADF JSON.
 import { openAsBlob } from "node:fs";
 import { basename } from "node:path";
-import type { FactoryConfig, RepoEntry } from "./config.js";
-import { log } from "./log.js";
+import { z } from "zod";
+import type { FactoryConfig, RepoEntry } from "../../config.js";
+import { LABELS, type Labels } from "../../labels.js";
+import { log } from "../../log.js";
+import type { Issue, Queue, Tracker, TrackerVendor } from "../types.js";
+import { mdToWiki } from "./markup.js";
 
-export interface Issue {
-  key: string;
-  project: string;
-  summary: string;
-  description: string;
-  status: string;
-  issueType: string;
-  labels: string[];
-  components: string[];
-  url: string;
-}
+export { mdToWiki } from "./markup.js";
+
+/** A repo's `tracker:` block when `type: jira`. */
+export const JiraRepoConfig = z.object({
+  project: z.string().min(1),
+  /** Route by component when one project feeds several repos. */
+  component: z.string().optional(),
+});
+export type JiraRepoConfig = z.infer<typeof JiraRepoConfig>;
+
+const repoScope = (repo: RepoEntry): JiraRepoConfig => JiraRepoConfig.parse(repo.tracker);
 
 export interface JiraOptions {
   baseUrl: string;
   email: string;
   token: string;
   dryRun?: boolean;
+  /** Needed by `find` (statuses, opt-in label). */
+  cfg?: FactoryConfig;
+  labels?: Labels;
+  /** Atlassian Rovo MCP server for the builder; omit to turn it off. */
+  rovoMcpUrl?: string;
   fetchImpl?: typeof fetch;
   /** Override backoff (tests). */
   retryDelayMs?: number;
 }
 
-export class Jira {
+export class Jira implements Tracker {
+  readonly id = "jira";
   private auth: string;
   private f: typeof fetch;
   constructor(private o: JiraOptions) {
@@ -83,6 +93,17 @@ export class Jira {
     return `${this.o.baseUrl}/browse/${key}`;
   }
 
+  describe(repo: RepoEntry): string {
+    const s = repoScope(repo);
+    return `jira:${s.project}${s.component ? `/${s.component}` : ""}`;
+  }
+
+  async find(queue: Queue, repo: RepoEntry): Promise<string[]> {
+    if (!this.o.cfg) throw new Error("Jira.find needs `cfg` in JiraOptions");
+    return this.search(jqlFor(this.o.cfg, repo, this.o.labels ?? LABELS)[queue]);
+  }
+
+  /** Runs a JQL query and returns every matching key, across pages. */
   async search(jql: string): Promise<string[]> {
     const keys: string[] = [];
     let nextPageToken: string | undefined;
@@ -121,12 +142,24 @@ export class Jira {
       project: r.fields.project.key,
       summary: r.fields.summary,
       description: r.fields.description ?? "",
+      descriptionFormat: "Jira wiki markup",
       status: r.fields.status.name,
       issueType: r.fields.issuetype.name,
       labels: r.fields.labels,
       components: r.fields.components.map((c) => c.name),
       url: this.issueUrl(r.key),
     };
+  }
+
+  /** By project, preferring a repo whose component the ticket has over one with no component. */
+  route(repos: RepoEntry[], issue: Pick<Issue, "project" | "components">): RepoEntry | undefined {
+    const inProject = repos.filter((r) => repoScope(r).project === issue.project);
+    return (
+      inProject.find((r) => {
+        const c = repoScope(r).component;
+        return c && issue.components.includes(c);
+      }) ?? inProject.find((r) => !repoScope(r).component)
+    );
   }
 
   /** Moves an issue to the named status if a transition to it exists. Returns false if none does. */
@@ -164,66 +197,46 @@ export class Jira {
     for (const f of files) form.append("file", await openAsBlob(f), basename(f));
     await this.req("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/attachments`, form, { "X-Atlassian-Token": "no-check" });
   }
+
+  /** The Atlassian Rovo MCP server, if enabled, so the builder can read linked issues and comments. */
+  agentMcpServers(): Record<string, object> {
+    if (!this.o.rovoMcpUrl) return {};
+    return { atlassian: { type: "http", url: this.o.rovoMcpUrl, headers: { Authorization: this.auth } } };
+  }
 }
 
 /** JQL fragments shared by every query for a repo. */
 function scope(cfg: FactoryConfig, repo: RepoEntry): string {
-  const parts = [`project = "${repo.jira.project}"`, `labels = "${cfg.enable_label}"`];
-  if (repo.jira.component) parts.push(`component = "${repo.jira.component}"`);
+  const s = repoScope(repo);
+  const parts = [`project = "${s.project}"`, `labels = "${cfg.enable_label}"`];
+  if (s.component) parts.push(`component = "${s.component}"`);
   return parts.join(" AND ");
 }
 
 const notLabels = (...l: string[]) => `labels not in (${l.map((x) => `"${x}"`).join(", ")})`;
 
-export function jqlFor(cfg: FactoryConfig, repo: RepoEntry, L: Record<string, string>) {
+export function jqlFor(cfg: FactoryConfig, repo: RepoEntry, L: Labels): Record<Queue, string> {
   const s = scope(cfg, repo);
   return {
-    toBuild: `${s} AND status = "${cfg.statuses.todo}" AND ${notLabels(L.building!, L.prOpen!, L.blocked!)} ORDER BY priority DESC, created ASC`,
-    toReview: `${s} AND labels = "${L.prOpen}" AND ${notLabels(L.reviewed!, L.merged!, L.blocked!)} ORDER BY updated ASC`,
-    toClose: `${s} AND labels = "${L.prOpen}" AND ${notLabels(L.merged!, L.blocked!)} AND status != "${cfg.statuses.done}"`,
-    toVerify: `${s} AND status = "${cfg.statuses.done}" AND ${notLabels(L.verified!, L.verifyFailed!, L.blocked!)} ORDER BY resolved ASC`,
+    toBuild: `${s} AND status = "${cfg.statuses.todo}" AND ${notLabels(L.building, L.prOpen, L.blocked)} ORDER BY priority DESC, created ASC`,
+    toReview: `${s} AND labels = "${L.prOpen}" AND ${notLabels(L.reviewed, L.merged, L.blocked)} ORDER BY updated ASC`,
+    toClose: `${s} AND labels = "${L.prOpen}" AND ${notLabels(L.merged, L.blocked)} AND status != "${cfg.statuses.done}"`,
+    toVerify: `${s} AND status = "${cfg.statuses.done}" AND ${notLabels(L.verified, L.verifyFailed, L.blocked)} ORDER BY resolved ASC`,
   };
 }
 
-/** Minimal Markdown -> Jira wiki markup: headings, bold, code, links, fenced code, tables. */
-export function mdToWiki(md: string): string {
-  const out: string[] = [];
-  const lines = md.split("\n");
-  let inCode = false;
-  let tableHeader = true;
-  for (const raw of lines) {
-    const line = raw.replace(/\r$/, "");
-    const fence = line.match(/^```(\w*)/);
-    if (fence) {
-      out.push(inCode ? "{code}" : fence[1] ? `{code:${fence[1]}}` : "{code}");
-      inCode = !inCode;
-      continue;
-    }
-    if (inCode) {
-      out.push(line);
-      continue;
-    }
-    if (/^\s*\|/.test(line)) {
-      if (/^\s*\|[\s:|-]+\|\s*$/.test(line)) continue; // separator row
-      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()) || " ");
-      out.push(tableHeader ? `||${cells.join("||")}||` : `|${cells.join("|")}|`);
-      tableHeader = false;
-      continue;
-    }
-    tableHeader = true;
-    const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) {
-      out.push(`h${h[1]!.length}. ${inline(h[2]!)}`);
-      continue;
-    }
-    out.push(inline(line.replace(/^(\s*)[-*]\s+/, (_m, sp: string) => `${"*".repeat(sp.length / 2 + 1)} `)));
-  }
-  return out.join("\n");
-}
-
-function inline(s: string): string {
-  return s
-    .replace(/`([^`]+)`/g, "{{$1}}")
-    .replace(/\*\*([^*]+)\*\*/g, "*$1*")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "[$1|$2]");
-}
+export const jira: TrackerVendor = {
+  id: "jira",
+  name: "Jira Cloud",
+  repoConfig: JiraRepoConfig,
+  create: ({ cfg, labels, dryRun, requireEnv, env }) =>
+    new Jira({
+      baseUrl: requireEnv("JIRA_BASE_URL").replace(/\/+$/, ""),
+      email: requireEnv("JIRA_EMAIL"),
+      token: requireEnv("JIRA_API_TOKEN"),
+      dryRun,
+      cfg,
+      labels,
+      rovoMcpUrl: env("JIRA_ROVO_MCP") === "true" ? (env("JIRA_ROVO_MCP_URL") ?? "https://mcp.atlassian.com/v1/mcp") : undefined,
+    }),
+};

@@ -37,6 +37,10 @@ repos:
   - name: portfolio
     git: git@github.com:SreekeshOkky/portfolio.git
     base_branch: main
-    jira:
+    # Where this repo's tickets come from. `type` picks the vendor in
+    # orchestrator/src/trackers/; the other keys are that vendor's options.
+    # host: { type: github }   # optional: the code host, inferred from github.com URLs
+    tracker:
+      type: jira
       project: KAN
       # component: web   # optional: route by component when one project feeds several repos
