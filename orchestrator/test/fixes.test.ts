@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commentableLines, splitComments } from "../src/github.js";
-import { Jira } from "../src/jira.js";
+import { Jira } from "../src/trackers/jira/index.js";
 import { retryHint } from "../src/stages/context.js";
 
 const diff = `diff --git a/src/new.ts b/src/new.ts

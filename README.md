@@ -100,9 +100,9 @@ repos:
   - name: portfolio          # kebab-case, unique
     git: git@github.com:SreekeshOkky/portfolio.git
     base_branch: main
-    jira: { project: KAN }   # add `component: web` to route one project to several repos
+    tracker: { type: jira, project: KAN }   # add `component: web` to route one project to several repos
 ```
-No code changes are needed to add a repo.
+No code changes are needed to add a repo. The older `jira: { project: KAN }` form still works.
 
 ### 5. Onboard each repo
 Run the `onboard-repo` skill on the repo, either in Claude Code on your machine or in the container. Load it from `plugins/factory/` as a plugin, or copy `plugins/factory/skills/onboard-repo/` into `~/.claude/skills/`. Then run:
@@ -154,9 +154,12 @@ Mounted read-only into the container, so edits need only a restart.
 | `max_turns.build` / `evidence` / `review` / `verify` | `150` / `40` / `40` / `60` | Turn budget per agent run |
 | `models.build` / `review` / `verify` | `opus` / `opus` / `sonnet` | `claude --model` alias per role. The evidence agent uses `verify`; regression tests use `build`. |
 | `regression_tests` | `false` | Open a Playwright regression-test PR after a fully passing verification |
-| `repos[]` | (at least one) | `name`, `git`, `base_branch` (default `main`), `jira.project`, optional `jira.component` |
+| `repos[]` | (at least one) | `name`, `git`, `base_branch` (default `main`), and `tracker` |
+| `repos[].tracker` | (required) | `type` (the vendor: `jira`) plus that vendor's options. For Jira: `project`, and optional `component`. |
 
-Tickets route to a repo by project, then component: a repo with a matching `component` wins over one without.
+For Jira, tickets route to a repo by project, then component: a repo with a matching `component` wins over one without.
+
+Tickets come from Jira today. Every tracker vendor lives in `orchestrator/src/trackers/`, and adding one (GitHub Issues, GitLab, Linear, Asana, ...) needs no changes to the stages: see [docs/adding-a-tracker.md](docs/adding-a-tracker.md).
 
 ### `factory.yml` (per repo)
 
@@ -179,14 +182,14 @@ The only thing the factory knows about a repo. `onboard-repo` writes it from [th
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | one of them | Claude auth |
-| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | yes | Jira Cloud site and factory account |
+| `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | if a repo uses Jira | Jira Cloud site and factory account |
 | `JIRA_ROVO_MCP`, `JIRA_ROVO_MCP_URL` | no | Give the builder Rovo MCP (default off) |
 | `GH_TOKEN` | yes | Clone, push and open PRs |
 | `GH_REVIEWER_TOKEN` | no | Post reviews from a second account (falls back to `GH_TOKEN`) |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | no | Identity on factory commits |
 | `DRY_RUN` | no | `true` skips Jira and GitHub writes (see [Run](#6-run)) |
 
-The container refuses to start without the required ones. Build args `CLAUDE_CODE_VERSION` and `PLAYWRIGHT_MCP_VERSION` pin the CLI versions (default `latest`).
+The container refuses to start without the required ones. Each tracker's variables are checked only if a repo uses that tracker. Build args `CLAUDE_CODE_VERSION` and `PLAYWRIGHT_MCP_VERSION` pin the CLI versions (default `latest`).
 
 ## Watching progress
 
@@ -223,9 +226,10 @@ Layout:
 - `orchestrator/src/index.ts`: the poll loop
 - `stages/*`: one file per lifecycle step (`build`, `review`, `close`, `verify`), plus the shared `context.ts` and blocking logic
 - `redgreen.ts`: the TDD check
-- `repo.ts`: the `factory.yml` contract, ticket modes, protected paths and routing
-- `config.ts`: `factory.config.yml`, environment and labels
-- `jira.ts`, `github.ts`, `claude.ts`: clients
+- `repo.ts`: the `factory.yml` contract, ticket modes and protected paths
+- `config.ts`: `factory.config.yml` and environment. `labels.ts`: the progress labels
+- `trackers/`: ticket-tracker vendors behind one `Tracker` interface (`types.ts`), registered in `index.ts`. `trackers/jira/` is the Jira Cloud client.
+- `github.ts`, `claude.ts`: clients
 - `prompts.ts`: what each agent is told
 - `workspace.ts`, `exec.ts`: clones, pushes, the app process and the `agent` user boundary
 - `state.ts`, `status.ts`, `log.ts`: progress tracking and the `status` command

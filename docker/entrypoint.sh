@@ -3,9 +3,8 @@
 set -euo pipefail
 
 : "${GH_TOKEN:?GH_TOKEN is required}"
-: "${JIRA_BASE_URL:?JIRA_BASE_URL is required}"
-: "${JIRA_EMAIL:?JIRA_EMAIL is required}"
-: "${JIRA_API_TOKEN:?JIRA_API_TOKEN is required}"
+# Tracker credentials (JIRA_*, ...) are checked by the orchestrator at startup,
+# only for the trackers factory.config.yml actually uses.
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY" >&2
   exit 1

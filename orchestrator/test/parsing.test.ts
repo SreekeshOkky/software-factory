@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { claudeArgs, lastJsonBlock, mcpConfig } from "../src/claude.js";
-import type { Env } from "../src/config.js";
 import { slugFromGitUrl } from "../src/github.js";
 import { buildPrompt, verifyPrompt } from "../src/prompts.js";
 import { parseRepoFactoryYml } from "../src/repo.js";
@@ -15,6 +14,7 @@ const issue = {
   status: "To Do",
   issueType: "Story",
   labels: ["factory-enabled"],
+  descriptionFormat: "Jira wiki markup",
   components: [],
   url: "https://x/browse/PORT-7",
 };
@@ -62,15 +62,14 @@ describe("prompts keep agents in their lane", () => {
 });
 
 describe("claude invocation", () => {
-  const env = { jiraEmail: "e", jiraToken: "t", jiraRovoMcp: false, jiraRovoMcpUrl: "u" } as Env;
   it("uses strict MCP config and an allowlist", () => {
     const a = claudeArgs({ agent: "pr-reviewer", prompt: "", cwd: ".", allowedTools: ["Read", "Grep"], maxTurns: 5, label: "x" }, "/m.json");
     expect(a).toEqual(expect.arrayContaining(["-p", "--agent", "pr-reviewer", "--strict-mcp-config", "--allowedTools", "Read,Grep"]));
   });
   it("only adds servers a run asks for", () => {
-    expect(mcpConfig(env, {})).toEqual({ mcpServers: {} });
-    expect(Object.keys((mcpConfig(env, { playwrightOutputDir: "/o", jira: true }) as { mcpServers: object }).mcpServers)).toEqual(["playwright"]);
-    expect(Object.keys((mcpConfig({ ...env, jiraRovoMcp: true }, { jira: true }) as { mcpServers: object }).mcpServers)).toEqual(["atlassian"]);
+    expect(mcpConfig({})).toEqual({ mcpServers: {} });
+    expect(Object.keys((mcpConfig({ playwrightOutputDir: "/o", extraServers: {} }) as { mcpServers: object }).mcpServers)).toEqual(["playwright"]);
+    expect(Object.keys((mcpConfig({ extraServers: { atlassian: { type: "http" } } }) as { mcpServers: object }).mcpServers)).toEqual(["atlassian"]);
   });
 });
 

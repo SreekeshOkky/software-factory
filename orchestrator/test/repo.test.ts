@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseFactoryConfig } from "../src/config.js";
-import { parseRepoFactoryYml, protectedViolations, routeIssue, selectMode } from "../src/repo.js";
+import { parseRepoFactoryYml, protectedViolations, selectMode } from "../src/repo.js";
+import { Jira } from "../src/trackers/jira/index.js";
 
 const yml = parseRepoFactoryYml(`
 install: npm ci
@@ -63,6 +64,8 @@ repos:
   });
 
   it("routes by component first, then project", () => {
+    const j = new Jira({ baseUrl: "https://x", email: "e", token: "t" });
+    const routeIssue = (repos: typeof cfg.repos, i: { project: string; components: string[] }) => j.route(repos, i);
     expect(routeIssue(cfg.repos, { project: "P", components: ["web"] })?.name).toBe("web");
     expect(routeIssue(cfg.repos, { project: "P", components: [] })?.name).toBe("api");
     expect(routeIssue(cfg.repos, { project: "S", components: [] })?.name).toBe("site");

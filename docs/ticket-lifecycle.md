@@ -19,7 +19,7 @@ The factory picks up a ticket only if all of these are true:
 - It has the **`factory-enabled`** label.
 - It is in the status the stage looks for (see [the stages](#2-the-stages)).
 
-From the ticket, the agents get **only the summary and the description**. Nothing else is fetched: not the comments, attachments, linked issues or history ([jira.ts](../orchestrator/src/jira.ts), [prompts.ts](../orchestrator/src/prompts.ts)). The builder, reviewer, evidence agent and verifier all see the same text.
+From the ticket, the agents get **only the summary and the description**. Nothing else is fetched: not the comments, attachments, linked issues or history ([trackers/jira](../orchestrator/src/trackers/jira/index.ts), [prompts.ts](../orchestrator/src/prompts.ts)). The builder, reviewer, evidence agent and verifier all see the same text.
 
 This has consequences:
 
