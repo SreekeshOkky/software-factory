@@ -6,13 +6,14 @@
 # Install dependencies from the lockfile. Runs in a fresh clone.
 install: "{{INSTALL}}"            # e.g. npm ci | pnpm install --frozen-lockfile | pip install -e '.[dev]'
 
-# Static/type check. Informational for agents; `test` decides red/green, so
-# include check in `test` too if it should gate.
+# Static/type check. It gates: the factory runs `check && test` to decide
+# red/green, so it must pass on the current code. Leave it "" if it doesn't,
+# and don't repeat it inside `test`.
 check: "{{CHECK}}"                # e.g. npm run check | tsc --noEmit | mypy .
 
-# The ONE command that decides red/green. Must exit non-zero on the red commit
-# and zero on the final commit. Must not need secrets or network.
-test: "{{TEST}}"                  # e.g. npm run check && npm test && npm run test:e2e
+# The test suite. Together with `check`, it must exit non-zero on the red
+# commit and zero on the final commit. Must not need secrets or network.
+test: "{{TEST}}"                  # e.g. npm test && npm run test:e2e
 
 # Build and serve the production app on `port`, in the foreground (the
 # orchestrator backgrounds and kills it). Used for screenshots and verification.

@@ -115,8 +115,8 @@ Read `references/<stack>.md` and follow it. In general:
   Playwright layer if there's a UI) for Python.
 - Add a type/static check script if the stack has one (`astro check`, `tsc --noEmit`,
   `mypy`), and **make it pass on the current code first**. If it reports existing
-  errors you can't fix without behaviour changes, leave it out of `test` and say
-  so in the PR.
+  errors you can't fix without behaviour changes, leave `factory.yml` `check`
+  empty and say so in the PR.
 - Write **one small passing seed test per layer**. It should exercise real code
   (render a real component, call a real lib function, load a real page), so the
   builder has a pattern to copy.
@@ -131,8 +131,9 @@ Read `references/<stack>.md` and follow it. In general:
 
 `factory.yml`: copy `templates/factory.yml.tmpl` and fill every key. The key set
 is a contract with the orchestrator. **Don't rename, drop or add top-level keys.**
-- `test` must be the single command that decides red/green. Include `check` in
-  it if check passes today.
+- The factory decides red/green with `check && test`. Set `check` only if it
+  passes today; otherwise leave it `""` and say so in the PR. Don't repeat
+  `check` inside `test`.
 - `start` must build and serve the production build on `port` and keep running.
   Prefer the framework's preview. If the adapter doesn't support it, add a tiny
   zero-dependency static server script (see the reference file).
