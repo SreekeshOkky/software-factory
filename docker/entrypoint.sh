@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Container setup that needs runtime secrets: git identity and GitHub auth.
+# Container setup: git identity and volume permissions.
 set -euo pipefail
 
-: "${GH_TOKEN:?GH_TOKEN is required}"
-# Tracker credentials (JIRA_*, ...) are checked by the orchestrator at startup,
-# only for the trackers factory.config.yml actually uses.
+# Tracker and code-host credentials (JIRA_*, GH_TOKEN, ...) are checked by the
+# orchestrator at startup, only for the vendors factory.config.yml actually uses.
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
   echo "Set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY" >&2
   exit 1
@@ -13,10 +12,9 @@ fi
 git config --global user.name "${GIT_AUTHOR_NAME:-Software Factory}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-factory@users.noreply.github.com}"
 git config --global init.defaultBranch main
-# Repos are listed with SSH URLs; clone over HTTPS with the token instead, so
-# the container needs no SSH keys.
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-gh auth setup-git
+# Git auth is not configured here: each code host vendor passes credentials and
+# the SSH-to-HTTPS rewrite to the orchestrator's own clone and push commands only
+# (see orchestrator/src/hosts/git.ts), so nothing the agent can read holds them.
 
 # Commits made by the agent user use the same identity (passed via sudo env_keep).
 export GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME:-Software Factory}" GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL:-factory@users.noreply.github.com}"

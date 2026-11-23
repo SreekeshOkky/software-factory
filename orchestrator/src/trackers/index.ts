@@ -3,6 +3,7 @@
 // the factory needs to change. See docs/adding-a-tracker.md.
 import type { FactoryConfig, RepoEntry } from "../config.js";
 import { LABELS } from "../labels.js";
+import { PerType, vendorEnv } from "../vendor.js";
 import { jira } from "./jira/index.js";
 import type { Tracker, TrackerVendor } from "./types.js";
 
@@ -20,19 +21,15 @@ export function vendorFor(type: string): TrackerVendor {
 
 /** The trackers the configured repos use, one instance per vendor. */
 export class Trackers {
-  private byId = new Map<string, Tracker>();
+  private all: PerType<Tracker>;
 
   /** `make` builds the tracker for one `tracker.type`. It is called once per type in use. */
   constructor(private repos: RepoEntry[], make: (type: string) => Tracker) {
-    for (const r of repos) {
-      if (!this.byId.has(r.tracker.type)) this.byId.set(r.tracker.type, make(r.tracker.type));
-    }
+    this.all = new PerType(repos.map((r) => r.tracker.type), make);
   }
 
   for(repo: RepoEntry): Tracker {
-    const t = this.byId.get(repo.tracker.type);
-    if (!t) throw new Error(`no tracker for repo ${repo.name} (${repo.tracker.type})`);
-    return t;
+    return this.all.get(repo.tracker.type, "tracker");
   }
 
   /** Which configured repo a ticket from `tracker` belongs to. */
@@ -44,16 +41,6 @@ export class Trackers {
 export function createTrackers(cfg: FactoryConfig, dryRun: boolean, source: NodeJS.ProcessEnv = process.env): Trackers {
   return new Trackers(cfg.repos, (type) => {
     const vendor = vendorFor(type);
-    return vendor.create({
-      cfg,
-      labels: LABELS,
-      dryRun,
-      env: (name) => source[name] || undefined,
-      requireEnv: (name) => {
-        const v = source[name];
-        if (!v) throw new Error(`missing env ${name} (needed by the ${vendor.name} tracker)`);
-        return v;
-      },
-    });
+    return vendor.create({ cfg, labels: LABELS, ...vendorEnv(`the ${vendor.name} tracker`, dryRun, source) });
   });
 }

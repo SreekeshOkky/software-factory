@@ -16,18 +16,18 @@ describe("tracker registry", () => {
 
 describe("repos[].tracker", () => {
   it("accepts the tracker block", () => {
-    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: x, tracker: { type: jira, project: P, component: web } }]`);
+    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: "git@github.com:o/x.git", tracker: { type: jira, project: P, component: web } }]`);
     expect(cfg.repos[0]!.tracker).toEqual({ type: "jira", project: "P", component: "web" });
   });
   it("still reads the older `jira:` block", () => {
-    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: x, jira: { project: P } }]`);
+    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: "git@github.com:o/x.git", jira: { project: P } }]`);
     expect(cfg.repos[0]!.tracker).toEqual({ type: "jira", project: "P" });
   });
   it("rejects an unknown tracker type", () => {
-    expect(() => parseFactoryConfig(`${base}repos: [{ name: a, git: x, tracker: { type: nope } }]`)).toThrow(/unknown tracker type "nope"/);
+    expect(() => parseFactoryConfig(`${base}repos: [{ name: a, git: "git@github.com:o/x.git", tracker: { type: nope } }]`)).toThrow(/unknown tracker type "nope"/);
   });
   it("rejects options the vendor doesn't accept", () => {
-    expect(() => parseFactoryConfig(`${base}repos: [{ name: a, git: x, tracker: { type: jira } }]`)).toThrow(/repo a: invalid Jira Cloud tracker config/);
+    expect(() => parseFactoryConfig(`${base}repos: [{ name: a, git: "git@github.com:o/x.git", tracker: { type: jira } }]`)).toThrow(/repo a: invalid Jira Cloud tracker config/);
   });
 });
 
@@ -56,7 +56,7 @@ describe("Trackers", () => {
   });
 
   it("asks only for the env of vendors in use, by name", () => {
-    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: x, tracker: { type: jira, project: P } }]`);
+    const cfg = parseFactoryConfig(`${base}repos: [{ name: a, git: "git@github.com:o/x.git", tracker: { type: jira, project: P } }]`);
     expect(() => createTrackers(cfg, true, {})).toThrow("missing env JIRA_BASE_URL (needed by the Jira Cloud tracker)");
     const t = createTrackers(cfg, true, { JIRA_BASE_URL: "https://x/", JIRA_EMAIL: "e", JIRA_API_TOKEN: "t" });
     expect(t.for(cfg.repos[0]!).describe(cfg.repos[0]!)).toBe("jira:P");

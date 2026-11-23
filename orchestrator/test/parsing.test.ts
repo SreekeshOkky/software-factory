@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { claudeArgs, lastJsonBlock, mcpConfig } from "../src/claude.js";
-import { slugFromGitUrl } from "../src/github.js";
+import { slugFromGitUrl } from "../src/hosts/github/index.js";
 import { buildPrompt, verifyPrompt } from "../src/prompts.js";
 import { parseRepoFactoryYml } from "../src/repo.js";
 import { parseReview } from "../src/stages/review.js";

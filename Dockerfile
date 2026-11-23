@@ -22,8 +22,8 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @playwright/
  && cd "$(npm root -g)/@playwright/mcp" && npx --no-install playwright install --with-deps chromium \
  && chmod -R a+rwx /ms-playwright
 
-# Two non-root users. `factory` runs the orchestrator and holds the GitHub and
-# Jira tokens. `agent` runs everything that executes repo code or model output
+# Two non-root users. `factory` runs the orchestrator and holds the code-host and
+# tracker tokens. `agent` runs everything that executes repo code or model output
 # (Claude, install, tests, the app, git in workspaces). A different uid can't
 # read the orchestrator's /proc/<pid>/environ or the 0700 /data volume. Both
 # share the `work` group for /work. `factory` may run only agent-exec as `agent`.

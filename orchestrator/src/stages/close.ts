@@ -1,12 +1,11 @@
 // PR merged by a human -> ticket to Done. PR closed without merge -> blocked.
 import { LABELS, type RepoEntry } from "../config.js";
-import { slugFromGitUrl } from "../github.js";
 import type { Issue } from "../trackers/index.js";
 import { branchFor } from "../workspace.js";
-import { Blocked, trackerFor, type Ctx } from "./context.js";
+import { Blocked, hostFor, trackerFor, type Ctx } from "./context.js";
 
 export async function closeStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Promise<void> {
-  const pr = await ctx.gh.findPr(slugFromGitUrl(repo.git), branchFor(issue.key));
+  const pr = await hostFor(ctx, repo).findPr(repo, branchFor(issue.key));
   if (!pr || pr.state === "OPEN") return;
   if (pr.state === "CLOSED") {
     throw new Blocked(`[PR #${pr.number}](${pr.url}) was closed without merging.`);

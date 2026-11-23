@@ -39,6 +39,7 @@ repos:
     base_branch: main
     # Where this repo's tickets come from. `type` picks the vendor in
     # orchestrator/src/trackers/; the other keys are that vendor's options.
+    # host: { type: github }   # optional: the code host, inferred from github.com URLs
     tracker:
       type: jira
       project: KAN

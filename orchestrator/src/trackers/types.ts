@@ -5,6 +5,7 @@
 import type { z } from "zod";
 import type { FactoryConfig, RepoEntry } from "../config.js";
 import type { Labels } from "../labels.js";
+import type { VendorEnv } from "../vendor.js";
 
 /** A ticket, in the shape every stage and prompt reads. */
 export interface Issue {
@@ -78,15 +79,9 @@ export interface Tracker {
 }
 
 /** What a vendor gets when the factory creates its tracker. */
-export interface VendorInit {
+export interface VendorInit extends VendorEnv {
   cfg: FactoryConfig;
   labels: Labels;
-  /** Reads a required environment variable; throws a clear error if it's missing. */
-  requireEnv(name: string): string;
-  /** Reads an optional environment variable. */
-  env(name: string): string | undefined;
-  /** When true, log every write instead of making it. Reads still happen. */
-  dryRun: boolean;
 }
 
 /** One tracker vendor. Register it in src/trackers/index.ts. */

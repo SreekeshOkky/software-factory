@@ -77,8 +77,8 @@ repos:
       parseFactoryConfig(`
 statuses: { todo: a, in_progress: b, done: c }
 repos:
-  - { name: a, git: x, jira: { project: P } }
-  - { name: a, git: y, jira: { project: Q } }
+  - { name: a, git: "git@github.com:o/x.git", jira: { project: P } }
+  - { name: a, git: "git@github.com:o/y.git", jira: { project: Q } }
 `),
     ).toThrow(/duplicate/);
   });

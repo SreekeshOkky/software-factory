@@ -1,7 +1,7 @@
 // Per-ticket working copies and the app process. Every stage gets a fresh
 // clone so one stage's leftovers can't leak into the next.
 //
-// Ownership: the factory (which holds the GitHub token) clones from GitHub
+// Ownership: the factory (which holds the code host's token) clones from the host
 // into `<dir>.src`; the agent user then clones that into `<dir>` and owns it.
 // Everything inside `<dir>` (install, tests, app, git) runs as the agent, so
 // code or git config the agent writes never runs with the factory's tokens.
@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { agentUser, killAgentProcesses, must, run, sh, spawnArgs, type RunResult } from "./exec.js";
 import { log } from "./log.js";
+import type { GitRemote } from "./hosts/index.js";
 import type { RepoFactoryYml } from "./repo.js";
 
 export const branchFor = (key: string) => `factory/${key}`;
@@ -28,13 +29,13 @@ export async function removeDir(dir: string): Promise<void> {
   if (existsSync(dir)) throw new Error(`could not remove ${dir}`);
 }
 
-export async function freshClone(gitUrl: string, dir: string, branch: string): Promise<void> {
+export async function freshClone(remote: GitRemote, dir: string, branch: string): Promise<void> {
   const src = `${dir}.src`;
   await removeDir(dir);
   await removeDir(src);
   mkdirSync(join(dir, ".."), { recursive: true });
   // Factory clone over the network (needs the token); agent clone from it (no token).
-  await must("git", ["clone", "--quiet", "--branch", branch, gitUrl, src]);
+  await must("git", ["clone", "--quiet", "--branch", branch, remote.url, src], { env: remote.env });
   await must("git", ["clone", "--quiet", "--no-hardlinks", "--branch", branch, src, dir], { asAgent: true });
   // The agent clone's `origin/<branch>` now names the base commit the stages diff against.
   await removeDir(src);
@@ -48,7 +49,7 @@ export const git = (dir: string, ...args: string[]) => must("git", args, { cwd: 
  * factory: fetch into a fresh factory-owned repo, push from there. Only
  * `factory/*` branches are ever pushed, so a force push is safe.
  */
-export async function pushBranch(agentDir: string, gitUrl: string, branch: string): Promise<void> {
+export async function pushBranch(agentDir: string, remote: GitRemote, branch: string): Promise<void> {
   if (!branch.startsWith("factory/")) throw new Error(`refusing to push non-factory branch ${branch}`);
   const tmp = `${agentDir}.push`;
   const bundle = `${agentDir}.bundle`;
@@ -59,7 +60,7 @@ export async function pushBranch(agentDir: string, gitUrl: string, branch: strin
   await git(agentDir, "bundle", "create", "--quiet", bundle, `refs/heads/${branch}`);
   await must("git", ["init", "--quiet", tmp]);
   await must("git", ["-C", tmp, "fetch", "--quiet", "--no-tags", bundle, `+refs/heads/${branch}:refs/heads/${branch}`]);
-  await must("git", ["-C", tmp, "push", "--quiet", "--force", gitUrl, `refs/heads/${branch}:refs/heads/${branch}`]);
+  await must("git", ["-C", tmp, "push", "--quiet", "--force", remote.url, `refs/heads/${branch}:refs/heads/${branch}`], { env: remote.env });
   await removeDir(tmp);
   await removeDir(bundle);
 }

@@ -122,4 +122,4 @@ DRY_RUN=true docker compose run --rm factory node /app/orchestrator/dist/index.j
 
 ## Scope
 
-This covers where tickets come from. Where code lives (clone, push, PRs and reviews) is still GitHub-only, in `github.ts` and `workspace.ts`. A GitLab tracker works today with code on GitHub. Supporting GitLab merge requests is a separate change.
+This covers where tickets come from. Where code lives (clone, push, PRs and reviews) is a separate vendor type: see [adding-a-code-host.md](adding-a-code-host.md). Any tracker works with any code host.

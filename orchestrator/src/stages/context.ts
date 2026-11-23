@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { Env, FactoryConfig, RepoEntry } from "../config.js";
 import { LABELS } from "../config.js";
-import type { GitHub } from "../github.js";
+import type { CodeHost, CodeHosts } from "../hosts/index.js";
 import type { Issue, Tracker, Trackers } from "../trackers/index.js";
 import { log } from "../log.js";
 import type { StateStore } from "../state.js";
@@ -10,12 +10,15 @@ export interface Ctx {
   cfg: FactoryConfig;
   env: Env;
   trackers: Trackers;
-  gh: GitHub;
+  hosts: CodeHosts;
   state: StateStore;
 }
 
 /** The tracker a repo's tickets live in. */
 export const trackerFor = (ctx: Ctx, repo: RepoEntry): Tracker => ctx.trackers.for(repo);
+
+/** The code host a repo lives on. */
+export const hostFor = (ctx: Ctx, repo: RepoEntry): CodeHost => ctx.hosts.for(repo);
 
 export const workDirFor = (ctx: Ctx, repo: RepoEntry, key: string, stage: string) => join(ctx.env.workDir, repo.name, `${key}-${stage}`);
 

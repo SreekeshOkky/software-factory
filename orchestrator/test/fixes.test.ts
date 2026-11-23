@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commentableLines, splitComments } from "../src/github.js";
+import { commentableLines, splitComments } from "../src/hosts/diff.js";
 import { Jira } from "../src/trackers/jira/index.js";
 import { retryHint } from "../src/stages/context.js";
 

@@ -4,13 +4,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:f
 import { join } from "node:path";
 import { lastJsonBlock, runClaude } from "../claude.js";
 import { LABELS, type RepoEntry } from "../config.js";
-import { slugFromGitUrl } from "../github.js";
 import type { Issue } from "../trackers/index.js";
 import { log } from "../log.js";
 import { regressionPrompt, verifyPrompt } from "../prompts.js";
 import { loadRepoFactoryYml, type RepoFactoryYml } from "../repo.js";
 import { changedFiles, freshClone, git, install, pushBranch, removeDir, runTests, startApp, type RunningApp } from "../workspace.js";
-import { Blocked, trackerFor, workDirFor, type Ctx } from "./context.js";
+import { Blocked, hostFor, trackerFor, workDirFor, type Ctx } from "./context.js";
 
 export type Verdict = "PASS" | "FAIL" | "UNTESTABLE";
 export interface VerdictRow {
@@ -47,7 +46,7 @@ export async function verifyStage(ctx: Ctx, repo: RepoEntry, issue: Issue): Prom
 
   const step = (s: string) => state.step(key, repo.name, "verify", s);
   step(`cloning ${repo.base_branch}`);
-  await freshClone(repo.git, dir, repo.base_branch);
+  await freshClone(hostFor(ctx, repo).remote(repo), dir, repo.base_branch);
   const yml = loadRepoFactoryYml(dir);
   if (!yml) throw new Blocked(`\`${repo.name}\` isn't onboarded (no factory.yml), so it can't be verified.`);
   step("installing dependencies");
@@ -120,8 +119,9 @@ async function regression(ctx: Ctx, repo: RepoEntry, issue: Issue, yml: RepoFact
   ctx.state.update(issue.key, repo.name, { costUsd: res.costUsd ?? 0 });
   if (!(await changedFiles(dir, repo.base_branch)).length) return;
   if ((await runTests(yml, dir)).code !== 0) throw new Error("regression suite does not pass");
-  if (!ctx.env.dryRun) await pushBranch(dir, repo.git, branch);
-  const pr = await ctx.gh.createPr(slugFromGitUrl(repo.git), {
+  const host = hostFor(ctx, repo);
+  if (!ctx.env.dryRun) await pushBranch(dir, host.remote(repo), branch);
+  const pr = await host.createPr(repo, {
     head: branch,
     base: repo.base_branch,
     title: `${issue.key}: regression tests`,

@@ -3,7 +3,6 @@
 // previews share state (one dev server port, one QA dataset).
 import { join } from "node:path";
 import { LABELS, loadEnv, loadFactoryConfig, type RepoEntry } from "./config.js";
-import { GitHub } from "./github.js";
 import { log } from "./log.js";
 import { StateStore } from "./state.js";
 import { buildStage } from "./stages/build.js";
@@ -11,6 +10,7 @@ import { closeStage } from "./stages/close.js";
 import { Blocked, block, trackerFor, type Ctx } from "./stages/context.js";
 import { reviewStage } from "./stages/review.js";
 import { verifyStage } from "./stages/verify.js";
+import { createCodeHosts } from "./hosts/index.js";
 import { createTrackers, type Issue } from "./trackers/index.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { removeDir } from "./workspace.js";
@@ -73,10 +73,10 @@ async function main() {
     cfg,
     env,
     trackers: createTrackers(cfg, env.dryRun),
-    gh: new GitHub({ token: env.ghToken, reviewerToken: env.ghReviewerToken, dryRun: env.dryRun, tmpDir }),
+    hosts: createCodeHosts(cfg, env.dryRun, tmpDir),
     state: new StateStore(join(env.dataDir, "state.json")),
   };
-  log.info(`factory up: ${cfg.repos.map((r) => `${r.name}<-${ctx.trackers.for(r).describe(r)}`).join(", ")}${env.dryRun ? " (dry run)" : ""}`);
+  log.info(`factory up: ${cfg.repos.map((r) => `${ctx.hosts.for(r).describe(r)}<-${ctx.trackers.for(r).describe(r)}`).join(", ")}${env.dryRun ? " (dry run)" : ""}`);
 
   const once = process.argv.includes("--once");
   for (const sig of ["SIGINT", "SIGTERM"] as const) {

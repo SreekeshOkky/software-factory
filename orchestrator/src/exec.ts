@@ -4,7 +4,7 @@
 // Trust boundary: anything that runs repo code or model output (Claude, install,
 // tests, the app, git inside a workspace) must pass `asAgent: true`. In the
 // container that runs it as the unprivileged `agent` user through sudo, which
-// resets the environment, so the orchestrator's GitHub and Jira tokens never
+// resets the environment, so the orchestrator's code-host and tracker tokens never
 // reach it and a different uid can't read them from /proc.
 import { spawn, type ChildProcess } from "node:child_process";
 
