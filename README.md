@@ -250,3 +250,7 @@ Layout:
 - **Screenshots are committed to the PR branch** under `.factory/evidence/KEY/`. GitHub has no API for uploading images, so this is how the PR shows them. Each code host decides the image link (`CodeHost.fileUrl`).
 - **Timeouts:** 90 minutes per agent run, 20 for `install`, 30 for `test`, and 5 for the app to become ready.
 - **A failed regression-test PR** is only logged. It doesn't block the ticket.
+
+## License
+
+[MIT](LICENSE)
