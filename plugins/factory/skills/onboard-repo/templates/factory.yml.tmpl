@@ -12,7 +12,8 @@ install: "{{INSTALL}}"            # e.g. npm ci | pnpm install --frozen-lockfile
 check: "{{CHECK}}"                # e.g. npm run check | tsc --noEmit | mypy .
 
 # The test suite. Together with `check`, it must exit non-zero on the red
-# commit and zero on the final commit. Must not need secrets or network.
+# commit and zero on the final commit. Must not need secrets or internet. A local
+# backend (factory services/) is allowed; reset its data here.
 test: "{{TEST}}"                  # e.g. npm test && npm run test:e2e
 
 # Build and serve the production app on `port`, in the foreground (the

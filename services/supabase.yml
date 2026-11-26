@@ -1,0 +1,117 @@
+# A real local Supabase for repos that need one: Postgres, Auth, the REST API,
+# Storage, a mail sink and a gateway. Enable it with this line in .env:
+#   COMPOSE_FILE=docker-compose.yml:services/supabase.yml
+# See services/README.md. Every secret here is a fixed, local test value: nothing
+# is published outside the compose network. Never reuse them anywhere else.
+# Data lives in memory-backed storage and is wiped when the containers are removed.
+
+x-secrets:
+  jwt: &jwt factory-local-test-only-jwt-secret-not-for-production
+  anon: &anon eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJmYWN0b3J5LWxvY2FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.8gBbnonC8ep5zdCyehKhIQ2EqY5EC_1K0HQY6pBA-SM
+  service: &service eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJmYWN0b3J5LWxvY2FsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoyMDAwMDAwMDAwfQ.Dkv7I2mjxm_vcz4gLQI0B-_goWm0bHloDGIciDQsSY8
+
+services:
+  factory:
+    depends_on:
+      factory-supabase:
+        condition: service_started
+      factory-supabase-db:
+        condition: service_healthy
+
+  factory-supabase-db:
+    image: public.ecr.aws/supabase/postgres:17.6.1.166
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: factory-local-db
+      JWT_SECRET: *jwt
+      JWT_EXP: "3600"
+    volumes:
+      - ./services/supabase/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-factory-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  factory-supabase-auth:
+    image: public.ecr.aws/supabase/gotrue:v2.196.0
+    restart: unless-stopped
+    depends_on:
+      factory-supabase-db: { condition: service_healthy }
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://factory-supabase:8000/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:factory-local-db@factory-supabase-db:5432/postgres
+      GOTRUE_SITE_URL: http://localhost:4173
+      GOTRUE_URI_ALLOW_LIST: http://localhost:*/**
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_SECRET: *jwt
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_HOST: factory-supabase-mail
+      GOTRUE_SMTP_PORT: "1025"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@factory.test
+      GOTRUE_SMTP_MAX_FREQUENCY: 1s
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"
+      GOTRUE_MAILER_URLPATHS_INVITE: http://factory-supabase:8000/auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: http://factory-supabase:8000/auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: http://factory-supabase:8000/auth/v1/verify
+
+  factory-supabase-rest:
+    image: public.ecr.aws/supabase/postgrest:v16.1
+    restart: unless-stopped
+    depends_on:
+      factory-supabase-db: { condition: service_healthy }
+    environment:
+      PGRST_DB_URI: postgres://authenticator:factory-local-db@factory-supabase-db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: *jwt
+
+  factory-supabase-storage:
+    image: public.ecr.aws/supabase/storage-api:v1.71.0
+    restart: unless-stopped
+    depends_on:
+      factory-supabase-db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://supabase_storage_admin:factory-local-db@factory-supabase-db:5432/postgres
+      ANON_KEY: *anon
+      SERVICE_KEY: *service
+      AUTH_JWT_SECRET: *jwt
+      POSTGREST_URL: http://factory-supabase-rest:3000
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      FILE_SIZE_LIMIT: "52428800"
+      TENANT_ID: stub
+      REGION: local
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    tmpfs:
+      - /var/lib/storage:mode=1777
+
+  factory-supabase-mail:
+    image: public.ecr.aws/supabase/mailpit:v1.30.2
+    restart: unless-stopped
+
+  # The single URL clients use, like a hosted project: http://factory-supabase:8000
+  factory-supabase:
+    image: public.ecr.aws/supabase/kong:2.8.1
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/factory.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: cors
+      KONG_NGINX_WORKER_PROCESSES: "1"
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+    volumes:
+      - ./services/supabase/kong.yml:/etc/kong/factory.yml:ro

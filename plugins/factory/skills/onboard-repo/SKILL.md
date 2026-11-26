@@ -1,7 +1,7 @@
 ---
 name: onboard-repo
 description: Onboard a target repo onto the Jira-driven software factory. Surveys the repo, then writes the contract files the factory reads (CLAUDE.md, factory.yml, docs/app-navigation.md), adds a test harness with seed tests, self-checks the commands, and opens an onboarding PR on branch factory/onboard. Use when asked to "onboard a repo", "make this repo factory-ready", or run /onboard-repo.
-argument-hint: "[path-to-repo] [--base <branch>] [--no-pr]"
+argument-hint: "[path-to-repo] [--base <branch>] [--factory <path>] [--no-pr]"
 ---
 
 # onboard-repo
@@ -23,7 +23,7 @@ it works both as the `factory` plugin and copied standalone into
 `~/.claude/skills/onboard-repo/`):
 - `templates/CLAUDE.md.tmpl`, `templates/factory.yml.tmpl`, `templates/app-navigation.md.tmpl`
 - `references/<stack>.md`: stack-specific harness recipes (`astro`, `next`,
-  `vite-react`, `python`). Read the one that matches. If none matches, use the
+  `vite-react`, `python`; backend: `supabase`). Read the one that matches. If none matches, use the
   closest one and adapt; say so in the PR.
 
 ## Arguments
@@ -32,6 +32,8 @@ it works both as the `factory` plugin and copied standalone into
   Defaults to the remote's default branch (`git symbolic-ref refs/remotes/origin/HEAD`).
   If that branch is clearly stale (the checked-out branch is far ahead of it
   and is where recent work lands), **stop and ask** which base to use.
+- `--factory <path>`: a checkout of the software factory repo, used only if the
+  repo needs a backend service (Step 3).
 - `--no-pr`: stop after the branch is ready; don't push.
 
 ## Ground rules
@@ -45,7 +47,8 @@ it works both as the `factory` plugin and copied standalone into
   (for example a test-only export). List every one in the PR body.
 - Don't add a linter or formatter the repo doesn't have unless the user asks.
   Record the observed style in CLAUDE.md instead.
-- Don't commit secrets. Seed tests must not need `.env` values or network access.
+- Don't commit secrets. Seed tests must not need `.env` values or internet access
+  (a local backend from Step 3 is fine).
 - Ask before pushing or opening the PR, unless the user already said to.
 
 ## Step 1. Survey
@@ -87,7 +90,11 @@ you'll cite them in CLAUDE.md and the PR body.
 10. **Dangerous or human-only things.** Deploy scripts, secret/key files, security
     headers/CSP, scripts that call external services (search-engine pings,
     publishing). These become `protected_paths` and CLAUDE.md "off limits" rules.
-11. **Does it build?** Run install and build once now. Note anything the factory
+11. **Backends.** What must be running for the app and tests to work: database
+    files, connection strings and env var names (`.env.example`), client
+    libraries (`@supabase/*`, `pg`, `prisma`, `redis`, SDKs), `supabase/`,
+    migration folders, existing compose files. Note what a signed-in screen needs.
+12. **Does it build?** Run install and build once now. Note anything the factory
     container will need (env vars with safe defaults, system deps) and whether the
     framework's own `preview` works with the configured adapter.
 
@@ -106,9 +113,35 @@ Fill `templates/CLAUDE.md.tmpl` from the survey. Rules:
   doesn't, create `CLAUDE.md` that starts with `@AGENTS.md` and holds only what
   AGENTS.md lacks.
 
-## Step 3. Test harness
+## Step 3. Backend
 
-Read `references/<stack>.md` and follow it. In general:
+Decide from survey item 11. Take the **first** option that fits:
+
+| The repo needs | Do |
+|---|---|
+| Nothing, or SQLite | Handle it in the repo: tests create and migrate a throwaway database file. |
+| One service that a dev dependency can run as a normal user (e.g. a downloadable Postgres binary) | Handle it in the repo; `test` and `start` start it. Prove it works in the factory image. |
+| A stack the factory has in `services/` | Use it. Read its README section and `references/<stack>.md`. |
+| Any other stack | Draft `services/<stack>.yml` for the factory, following `services/README.md`, as a **separate PR to the factory repo**. |
+
+Rules:
+- **Ask the user** before choosing a factory service, a hosted test project, or a
+  fake. State what each option would leave untested.
+- Prefer the real service. Fake only third parties that can't run locally
+  (payment, email or AI APIs), at the network boundary. Don't hand-copy a database.
+- Whatever you choose: migrations run from the repo's own files, data is reset
+  and seeded by the repo's `test` and `start` commands, and a broken migration
+  fails `test`. Destructive resets must refuse any host except the factory's.
+- Never edit the factory's `docker-compose.yml`, `Dockerfile` or code from here,
+  and never push to it without asking. A stack file runs on the user's machine,
+  so it gets its own human review. Without `--factory` and with no checkout
+  found, print the proposed file and say where it goes.
+- The factory PR must merge, and the stack be enabled, **before** the repo's
+  onboarding PR can pass. Say so in both PRs.
+
+## Step 4. Test harness
+
+Read `references/<stack>.md` (and the backend's, from Step 3) and follow it. In general:
 - **Reuse** an existing runner if there is one. Otherwise add the reference's.
 - Layers: a **unit/component** layer (fast, no browser) and an **e2e** layer
   (Playwright against the built app) for web apps; pytest (plus an HTTP or
@@ -127,7 +160,7 @@ Read `references/<stack>.md` and follow it. In general:
 - Prove the harness can go red: temporarily break a seed assertion, confirm
   the `test` command exits non-zero, then revert. Don't commit the broken version.
 
-## Step 4. `factory.yml` and `docs/app-navigation.md`
+## Step 5. `factory.yml` and `docs/app-navigation.md`
 
 `factory.yml`: copy `templates/factory.yml.tmpl` and fill every key. The key set
 is a contract with the orchestrator. **Don't rename, drop or add top-level keys.**
@@ -152,7 +185,7 @@ with how to open it (selector, keyboard shortcut) and what it contains. Describe
 dynamic routes with one real example URL each. Note anything that needs secrets or
 network and won't work locally.
 
-## Step 5. Self-check
+## Step 6. Self-check
 
 Run each command from `factory.yml` in a clean state, exactly as written:
 1. `install`: must exit 0.
@@ -164,10 +197,14 @@ Run each command from `factory.yml` in a clean state, exactly as written:
 4. Validate `factory.yml`: parse it as YAML and check it has every key from the
    template, `port` is a number, and `ticket_modes.default.recipe` is non-empty.
 
+With a backend service, run these inside the factory image on the services'
+network (`docker run --network <project>_default ...`), and also confirm that a
+deliberately broken migration fails `test`.
+
 If anything fails, fix the harness or the commands and rerun all of it. Report
 the outputs (exit codes, test counts, the HTTP status) in the PR body.
 
-## Step 6. Branch and PR
+## Step 7. Branch and PR
 
 - Commit on `factory/onboard` in small commits using the repo's own prefix style
   (for example `docs: add CLAUDE.md for agents`, `test: add vitest and playwright
