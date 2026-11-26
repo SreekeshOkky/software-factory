@@ -69,6 +69,7 @@ How the separation holds:
 - **Protected paths:** `.env`, `.env.*` and `factory.yml` are always protected, on top of the repo's own `protected_paths`.
 
 **Still open:**
+- Agents can reach any enabled backend stack in `services/` and know its test secrets, so keep real data out of them.
 - Agents have unrestricted outbound network access, so they could send repo contents elsewhere. Use an egress proxy if that matters to you.
 - The agent can read its own Claude token.
 - If Rovo MCP is on, the builder's MCP config holds the Jira credentials for the length of its run.
@@ -123,7 +124,10 @@ It works in a separate git worktree if your checkout has uncommitted changes.
 
 **Review that PR carefully.** Its `factory.yml` commands run in the container, and its `CLAUDE.md` is the rulebook for every ticket.
 
-### 6. Run
+### 6. Backend services (if a repo needs them)
+Some repos need a real backend, such as Supabase, for their tests and running app. Each stack is a separate compose file in `services/`, switched on with `COMPOSE_FILE` in `.env`: see [services/README.md](services/README.md). `onboard-repo` tells you which one a repo needs.
+
+### 7. Run
 ```bash
 cp .env.example .env   # fill it in
 ```
@@ -191,7 +195,7 @@ The only thing the factory knows about a repo. `onboard-repo` writes it from [th
 | `GH_TOKEN` | if a repo is on GitHub | Clone, push and open PRs |
 | `GH_REVIEWER_TOKEN` | no | Post reviews from a second account (falls back to `GH_TOKEN`) |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | no | Identity on factory commits |
-| `DRY_RUN` | no | `true` skips tracker and code-host writes (see [Run](#6-run)) |
+| `DRY_RUN` | no | `true` skips tracker and code-host writes (see [Run](#7-run)) |
 
 The container refuses to start without the required ones. Each tracker's and code host's variables are checked only if a repo uses it. Build args `CLAUDE_CODE_VERSION` and `PLAYWRIGHT_MCP_VERSION` pin the CLI versions (default `latest`).
 
@@ -239,6 +243,7 @@ Layout:
 - `workspace.ts`, `exec.ts`: clones, pushes, the app process and the `agent` user boundary
 - `state.ts`, `status.ts`, `log.ts`: progress tracking and the `status` command
 - `orchestrator/test/`: unit tests (vitest)
+- `services/`: optional backend stacks (compose files) for target repos
 - `docker/claude-home/`: the agents, the `red-green` skill and the deny rules, installed as the `agent` user's `~/.claude`
 - `docker/agent-exec`, `docker/sudoers-factory`, `docker/entrypoint.sh`: the user separation and container setup
 - `plugins/factory/`: the `onboard-repo` skill with its templates and stack references
